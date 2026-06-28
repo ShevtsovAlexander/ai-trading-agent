@@ -1,0 +1,13 @@
+POST http://localhost:3000/analyze
+Content-Type: application/json
+
+{
+  "market": "BTC/USDT",
+  "coinId": "bitcoin",
+  "volume": 1500
+}
+
+###
+
+GET  http://localhost:3000/positions/bitcoin/open
+Content-Type: application/json

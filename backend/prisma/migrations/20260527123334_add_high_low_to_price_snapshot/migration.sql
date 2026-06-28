@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "PriceSnapshot" ADD COLUMN     "high" DOUBLE PRECISION,
+ADD COLUMN     "low" DOUBLE PRECISION;

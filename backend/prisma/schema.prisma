@@ -1,0 +1,82 @@
+generator client {
+  provider        = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model PriceSnapshot {
+  id        Int      @id @default(autoincrement())
+  coinId    String
+  price     Float
+  high      Float?   // высшая цена свечи
+  low       Float?   // низшая цена свечи
+  createdAt DateTime @default(now())
+
+  @@index([coinId, createdAt])
+}
+
+model TradeDecision {
+  id            Int      @id @default(autoincrement())
+  market        String
+  coinId        String
+  currentPrice  Float
+  previousPrice Float?
+  movingAverage Float?
+  ema9          Float?
+  ema21         Float?
+  rsi           Float?
+  macdValue     Float?
+  macdSignal    Float?
+  macdHistogram Float?
+  bbUpper       Float?
+  bbMiddle      Float?
+  bbLower       Float?
+  bbBandwidth   Float?
+  trend         String
+  decision      String
+  confidence    Int
+  riskScore     Int
+  expectedValue Float
+  reason        String
+  aiReasoning   String
+  createdAt     DateTime @default(now())
+
+  @@index([coinId, createdAt])
+}
+model Wallet {
+  id          Int      @id @default(autoincrement())
+  balance     Float
+  initialBalance Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model WalletTransaction {
+  id          Int      @id @default(autoincrement())
+  amount      Float
+  type        String   // "DEPOSIT" | "PROFIT" | "LOSS"
+  coinId      String
+  decision    String
+  price       Float
+  createdAt   DateTime @default(now())
+}
+
+model Position {
+  id          Int       @id @default(autoincrement())
+  coinId      String
+  market      String
+  decision    String    // "BUY" | "SELL"
+  entryPrice  Float     // цена входа
+  stopLoss    Float     // текущий уровень trailing stop
+  highPrice   Float     // максимальная цена после входа (для trailing)
+  lowPrice    Float     // минимальная цена после входа (для SELL trailing)
+  status      String    // "OPEN" | "CLOSED"
+  closedPrice Float?    // цена выхода
+  pnl         Float?    // итоговый P&L
+  closedAt    DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([coinId, status])
+}
