@@ -1,4 +1,6 @@
-![Dashboard](https://github.com/user-attachments/assets/bc6527be-f088-4ee7-bc68-e2e1b540ebb3)
+![Dashboard-main](https://github.com/user-attachments/assets/00169137-e87a-407d-a797-011504c123ae)
+![Dashboard-news](https://github.com/user-attachments/assets/e68cb1a8-2d98-4e09-8496-686c750ac5a7)
+
 # AI Trading Agent
 
 Fullstack-система анализа крипторынка: AI-агент анализирует технические индикаторы, управляет виртуальными позициями и визуализирует решения в реальном времени. Включает собственный бэктест-движок для проверки торговых стратегий на исторических данных.
