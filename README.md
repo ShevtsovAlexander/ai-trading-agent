@@ -1,4 +1,4 @@
-![Dashboard-main](https://github.com/user-attachments/assets/00169137-e87a-407d-a797-011504c123ae)
+![Dashboard-main](https://github.com/user-attachments/assets/e5fdd542-7fac-4652-a27a-57c35b02f051)
 ![Dashboard-news](https://github.com/user-attachments/assets/e68cb1a8-2d98-4e09-8496-686c750ac5a7)
 
 # AI Trading Agent
