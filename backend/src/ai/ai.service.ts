@@ -44,4 +44,26 @@ export class AiService {
 
     return chat.choices[0].message.content ?? 'Анализ недоступен';
   }
+
+  // Универсальный one-shot вызов модели — для задач вне торгового анализа
+  // (перевод новостей и т.п.). Возвращает пустую строку, если модель молчит.
+  async complete(
+    prompt: string,
+    opts: { system?: string; maxTokens?: number; temperature?: number } = {},
+  ): Promise<string> {
+    const messages: Groq.Chat.ChatCompletionMessageParam[] = [];
+    if (opts.system) {
+      messages.push({ role: 'system', content: opts.system });
+    }
+    messages.push({ role: 'user', content: prompt });
+
+    const chat = await this.groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages,
+      max_completion_tokens: opts.maxTokens ?? 1024,
+      temperature: opts.temperature,
+    });
+
+    return chat.choices[0].message.content ?? '';
+  }
 }

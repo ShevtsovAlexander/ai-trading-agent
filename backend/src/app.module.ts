@@ -9,6 +9,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { WalletModule } from './wallet/wallet.module';
 import { PositionModule } from './position/position.module';
 import { BacktestModule } from './backtest/backtest.module';
+import { NewsModule } from './news/news.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { BacktestModule } from './backtest/backtest.module';
     PositionModule,
     PriceModule,
     BacktestModule,
+    NewsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

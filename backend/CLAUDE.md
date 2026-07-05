@@ -29,6 +29,11 @@ src/
 │   ├── analyze.module.ts
 │   ├── analyze.service.ts       — weighted confluence логика + позиции + сохранение
 │   └── analyze.service.spec.ts  — 9 тестов
+├── news/
+│   ├── news.controller.ts       — GET /news
+│   ├── news.module.ts
+│   ├── news.service.ts          — RSS-фиды (Cointelegraph, Coindesk, Decrypt), cron каждый час, дедуп, кэш
+│   └── news.types.ts            — NewsItem
 ├── position/
 │   ├── position.controller.ts   — GET /positions, GET /positions/:coinId, GET /positions/:coinId/open
 │   ├── position.module.ts
@@ -63,6 +68,8 @@ src/
 - POST /wallet/deposit              — { amount: number }
 - GET  /wallet/stats?period=day|week|month|all
 - GET  /wallet/history?period=day|week|month|all
+- GET  /news                        — крипто-новости из RSS (Cointelegraph, Coindesk, Decrypt)
+- GET  /news/digest                  — AI-дайджест ленты (кэш по хешу id, генерится в refresh)
 
 ## POST /analyze — формат запроса
 {
