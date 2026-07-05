@@ -29,9 +29,16 @@ const Container = styled.div`
   background: ${({ theme }) => theme.colors.surface};
   border: 1px solid ${({ theme }) => theme.colors.border};
   border-radius: ${({ theme }) => theme.radius.lg};
+  position: relative;
+`;
+
+// Контент абсолютным слоем: не раздувает высоту строки грида, поэтому
+// высоту диктует левая колонка, а список скроллится внутри → футеры на одном уровне.
+const Inner = styled.div`
+  position: absolute;
+  inset: 0;
   padding: 16px;
-  overflow-x: auto;
-  max-height: 818px;
+  overflow: auto;
 `;
 
 const Title = styled.div`
@@ -139,8 +146,9 @@ const formatTime = (iso: string): string => {
 export const DecisionsTable = ({ decisions }: Props) => {
   return (
     <Container>
-      <Title>История решений</Title>
-      <Table>
+      <Inner>
+        <Title>История решений</Title>
+        <Table>
         <HeadRow>
           <Th>Монета</Th>
           <Th>Цена</Th>
@@ -181,7 +189,8 @@ export const DecisionsTable = ({ decisions }: Props) => {
             <Td>{formatTime(d.createdAt)}</Td>
           </Row>
         ))}
-      </Table>
+        </Table>
+      </Inner>
     </Container>
   );
 };

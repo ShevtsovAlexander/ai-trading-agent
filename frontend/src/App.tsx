@@ -20,6 +20,7 @@ import { PriceChart } from "./components/PriceChart";
 import { DecisionsTable } from "./components/DecisionsTable";
 import { StatsChart } from "./components/StatsPanel";
 import { PositionsPanel } from "./components/PositionsPanel";
+import { NewsPanel } from "./components/NewsPanel";
 import { getPositions } from "./api/trading";
 import type { Position } from "./types/trading";
 
@@ -30,6 +31,7 @@ const COINS = [
 ];
 
 type Period = "day" | "week" | "month" | "all";
+type Tab = "trading" | "intel";
 
 interface BalancePoint {
   date: string;
@@ -49,6 +51,7 @@ export default function App() {
   const [balanceHistory, setBalanceHistory] = useState<BalancePoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [tab, setTab] = useState<Tab>("trading");
 
   const fetchData = useCallback(async () => {
     const [w, s, h, d, bh, pos] = await Promise.all([
@@ -108,49 +111,65 @@ export default function App() {
           <Title>
             AI <Purple>Trading</Purple> Agent
           </Title>
-          <CoinTabs>
-            {COINS.map((coin) => (
-              <CoinBtn
-                key={coin.id}
-                active={activeCoin.id === coin.id}
-                color={coin.color}
-                onClick={() => setActiveCoin(coin)}
-              >
-                {coin.label}
-              </CoinBtn>
-            ))}
-          </CoinTabs>
+          <HeaderTabs>
+            <CoinTabs>
+              {COINS.map((coin) => (
+                <CoinBtn
+                  key={coin.id}
+                  active={activeCoin.id === coin.id}
+                  color={coin.color}
+                  onClick={() => setActiveCoin(coin)}
+                >
+                  {coin.label}
+                </CoinBtn>
+              ))}
+            </CoinTabs>
+            <ViewTabs>
+              <ViewTab $active={tab === "trading"} onClick={() => setTab("trading")}>
+                Торговля
+              </ViewTab>
+              <ViewTab $active={tab === "intel"} onClick={() => setTab("intel")}>
+                Инфополе
+              </ViewTab>
+            </ViewTabs>
+          </HeaderTabs>
         </Header>
 
-        <TopRow>
-          <WalletPanel stats={stats} />
-          <PriceChart
-            history={history}
-            decisions={decisions}
-            coin={activeCoin}
-            onRangeChange={setChartLimit}
-          />
-        </TopRow>
+        <TabPanel $active={tab === "trading"}>
+          <TopRow>
+            <WalletPanel stats={stats} />
+            <PriceChart
+              history={history}
+              decisions={decisions}
+              coin={activeCoin}
+              onRangeChange={setChartLimit}
+            />
+          </TopRow>
 
-        <MidRow>
-          <StatsChart
-            data={balanceHistory}
-            initialBalance={initialBalance}
-            period={balancePeriod}
-            onPeriodChange={setPeriod}
-          />
-        </MidRow>
+          <MidRow>
+            <StatsChart
+              data={balanceHistory}
+              initialBalance={initialBalance}
+              period={balancePeriod}
+              onPeriodChange={setPeriod}
+            />
+          </MidRow>
 
-        <BottomRow>
-          <Left>
-            {lastDecision && <DecisionCard data={lastDecision} />}
-            <PositionsPanel positions={positions} />
-            <AnalyzeBtn onClick={handleAnalyze} disabled={loading}>
-              {loading ? "Анализирую..." : "⚡ Запустить анализ"}
-            </AnalyzeBtn>
-          </Left>
-          <DecisionsTable decisions={decisions} />
-        </BottomRow>
+          <BottomRow>
+            <Left>
+              {lastDecision && <DecisionCard data={lastDecision} />}
+              <PositionsPanel positions={positions} />
+              <AnalyzeBtn onClick={handleAnalyze} disabled={loading}>
+                {loading ? "Анализирую..." : "⚡ Запустить анализ"}
+              </AnalyzeBtn>
+            </Left>
+            <DecisionsTable decisions={decisions} />
+          </BottomRow>
+        </TabPanel>
+
+        <TabPanel $active={tab === "intel"}>
+          <NewsPanel />
+        </TabPanel>
       </Inner>
     </Wrapper>
   );
@@ -185,9 +204,39 @@ const Purple = styled.span`
   color: ${({ theme }) => theme.colors.purple};
 `;
 
+const HeaderTabs = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 20px;
+`;
+
 const CoinTabs = styled.div`
   display: flex;
   gap: 8px;
+`;
+
+const ViewTabs = styled.div`
+  display: flex;
+  gap: 4px;
+`;
+
+const ViewTab = styled.button<{ $active: boolean }>`
+  padding: 6px 16px;
+  border-radius: ${({ theme }) => theme.radius.md};
+  border: 1px solid
+    ${({ $active, theme }) => ($active ? theme.colors.purple : theme.colors.border)};
+  background: ${({ $active, theme }) =>
+    $active ? `${theme.colors.purple}22` : "transparent"};
+  color: ${({ $active, theme }) =>
+    $active ? theme.colors.purple : theme.colors.textSecondary};
+  font-weight: 500;
+  font-size: ${({ theme }) => theme.fontSize.md};
+  cursor: pointer;
+  transition: all 0.15s;
+`;
+
+const TabPanel = styled.div<{ $active: boolean }>`
+  display: ${({ $active }) => ($active ? "block" : "none")};
 `;
 
 const CoinBtn = styled.button<{ active: boolean; color: string }>`
