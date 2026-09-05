@@ -14,7 +14,7 @@ NestJS backend для AI trading агента.
 - @nestjs/config — переменные окружения
 - @nestjs/schedule — cron задачи
 - class-validator — валидация входящих данных
-- groq-sdk — AI через Groq (llama-3.3-70b-versatile)
+- groq-sdk — AI через Groq (модель из GROQ_MODEL, дефолт openai/gpt-oss-120b)
 - Prisma 7 + @prisma/adapter-pg — ORM для PostgreSQL
 - CoinGecko API — реальные цены криптовалют (бесплатно, без ключа)
 
@@ -163,6 +163,8 @@ src/
 
 ## Переменные окружения (.env)
 GROQ_API_KEY=...
+GROQ_MODEL=openai/gpt-oss-120b   # id модели Groq; дефолт в коде — openai/gpt-oss-120b
+GROQ_REASONING_EFFORT=low        # low|medium|high; off — не слать параметр (модели без reasoning)
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trading_agent
 
 ## Инфраструктура
@@ -180,27 +182,19 @@ npm run test
 
 ## AIDD Workflow
 
-Процесс работы над новыми фичами через Claude Code.
+Процесс живёт в корне репозитория, не здесь. Смотри `../CLAUDE.md` — раздел
+«AIDD-флоу»: фазы `idea` → `research` → `plan` → `implement` (скиллы в
+`.claude/skills/`), проверка — агент `critic`, артефакты — `docs/aidd/`,
+активный тикет — `docs/aidd/.active_ticket`.
 
-### Структура
-- `docs/<FEATURE>.md` — ТЗ фичи с tasklist в конце
-- `docs/plan/<FEATURE>.md` — архитектурный план (генерируется `/plan`)
-- `docs/tasklist/<FEATURE>.md` — детальный чек-лист (генерируется `/plan`)
-- `.claude/commands/` — slash-команды (plan, implement, review)
+Прежние slash-команды `/plan`, `/implement`, `/review` в `backend/.claude/commands/`
+удалены (коммит `d8777d9`) — их заменили корневые скиллы. Каталог `backend/docs/`
+(`BACKTEST.md` + `plan/` + `tasklist/`) остался от того процесса: бэктест-модуль
+реализован, артефакты держим как летопись, новые сюда не пишем.
 
-### Команды
-- `/plan <FEATURE>` — превратить ТЗ в архитектурный план и tasklist
-- `/implement <FEATURE>` — реализовать следующую задачу из tasklist
-- `/review <FEATURE>` — проверить реализацию
-
-### Workflow для новой фичи
-1. Создать `docs/<FEATURE>.md` с описанием и tasklist
-2. `/plan <FEATURE>` → план + детальный tasklist
-3. `/implement <FEATURE>` → итеративно по задачам
-4. `/review <FEATURE>` → финальная проверка
-
-### Текущие фичи
-- `docs/BACKTEST.md` — модуль бэктестинга (в работе)
+Перед работой в бэкенде читай корневые `../docs/VISION.md` и `../docs/ROADMAP.md`:
+торговое ядро (Wallet / Position / BUY-SELL решения) помечено к удалению —
+проект переориентирован на информационный дашборд.
 
 ## Что сделано
 - [x] NestJS проект с модульной структурой
@@ -213,7 +207,7 @@ npm run test
 - [x] Контрарная коррекция confidence/riskScore
 - [x] Trailing stop loss с re-entry
 - [x] Виртуальный кошелёк — баланс, P&L, история
-- [x] AI reasoning через Groq (llama-3.3-70b)
+- [x] AI reasoning через Groq (openai/gpt-oss-120b)
 - [x] Logger — NestJS Logger везде
 - [x] CORS — localhost:5173
 - [x] 9 тестов для AnalyzeService
