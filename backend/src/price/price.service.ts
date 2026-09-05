@@ -242,33 +242,4 @@ export class PriceService {
       bandwidth,
     };
   }
-
-  async getATR(coinId: string, period = 14): Promise<number | null> {
-    const snapshots = await this.prisma.priceSnapshot.findMany({
-      where: { coinId },
-      orderBy: { createdAt: 'asc' },
-      take: period + 1,
-    });
-
-    if (snapshots.length < period + 1) return null;
-
-    const trueRanges: number[] = [];
-    for (let i = 1; i < snapshots.length; i++) {
-      const curr = snapshots[i];
-      const prevClose = snapshots[i - 1].price;
-
-      const high = curr.high ?? curr.price;
-      const low = curr.low ?? curr.price;
-
-      const tr = Math.max(
-        high - low,
-        Math.abs(high - prevClose),
-        Math.abs(low - prevClose),
-      );
-      trueRanges.push(tr);
-    }
-
-    const atr = trueRanges.reduce((a, b) => a + b, 0) / trueRanges.length;
-    return parseFloat(atr.toFixed(2));
-  }
 }

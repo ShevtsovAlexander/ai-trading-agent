@@ -80,6 +80,10 @@ export default function App() {
         volume: 1500,
       });
       await fetchData();
+    } catch (e) {
+      // Тот же реджект, что и в run(): до T6 fetchData ходит на удалённые
+      // маршруты торгового ядра. Здесь он вылетал бы из onClick кнопки.
+      console.warn("[dashboard] обновление по кнопке не удалось:", e);
     } finally {
       setLoading(false);
     }
@@ -92,8 +96,15 @@ export default function App() {
     let cancelled = false;
 
     const run = async () => {
-      const w = await fetchData();
-      if (!cancelled) setInitialBalance(w.initialBalance);
+      try {
+        const w = await fetchData();
+        if (!cancelled) setInitialBalance(w.initialBalance);
+      } catch (e) {
+        // С T1 по T6 часть маршрутов торгового ядра удалена, Promise.all в
+        // fetchData реджектится на первом 404 — состояние не заполняется.
+        // Ловим, чтобы не сыпать unhandled rejection каждые 5 минут.
+        console.warn("[dashboard] обновление данных не удалось:", e);
+      }
     };
 
     run();

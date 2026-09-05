@@ -3,8 +3,6 @@ import { AnalyzeService } from './analyze.service';
 import { PriceService } from '../price/price.service';
 import { AiService } from '../ai/ai.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { WalletService } from '../wallet/wallet.service';
-import { PositionService } from '../position/position.service';
 
 const mockPriceService = {
   getPrice: jest.fn(),
@@ -15,7 +13,6 @@ const mockPriceService = {
   getRSI: jest.fn(),
   getMACD: jest.fn(),
   getBollingerBands: jest.fn(),
-  getATR: jest.fn().mockResolvedValue(null),
 };
 
 const mockAiService = {
@@ -29,16 +26,6 @@ const mockPrismaService = {
   },
 };
 
-const mockWalletService = {
-  applyDecision: jest.fn().mockResolvedValue({}),
-};
-
-const mockPositionService = {
-  checkAndUpdatePosition: jest.fn().mockResolvedValue(null),
-  getOpenPosition: jest.fn().mockResolvedValue(null),
-  openPosition: jest.fn().mockResolvedValue({}),
-};
-
 describe('AnalyzeService', () => {
   let service: AnalyzeService;
 
@@ -49,8 +36,6 @@ describe('AnalyzeService', () => {
         { provide: PriceService, useValue: mockPriceService },
         { provide: AiService, useValue: mockAiService },
         { provide: PrismaService, useValue: mockPrismaService },
-        { provide: WalletService, useValue: mockWalletService },
-        { provide: PositionService, useValue: mockPositionService },
       ],
     }).compile();
 

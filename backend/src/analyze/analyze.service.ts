@@ -2,9 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PriceService } from '../price/price.service';
 import { AiService } from '../ai/ai.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { WalletService } from '../wallet/wallet.service';
 import { AnalyzeDto } from './analyze.dto';
-import { PositionService } from '../position/position.service';
 
 // Динамический порог шума для каждой монеты
 // BTC менее волатилен — 0.2% уже значимое движение
@@ -24,8 +22,6 @@ export class AnalyzeService {
     private priceService: PriceService,
     private aiService: AiService,
     private prisma: PrismaService,
-    private walletService: WalletService,
-    private positionService: PositionService,
   ) {}
 
   async analyze(dto: AnalyzeDto) {
@@ -41,7 +37,6 @@ export class AnalyzeService {
       rsi,
       macd,
       bb,
-      atr,
     ] = await Promise.all([
       this.priceService.getPrice(dto.coinId),
       this.priceService.getPreviousPrice(dto.coinId),
@@ -52,7 +47,6 @@ export class AnalyzeService {
       this.priceService.getRSI(dto.coinId),
       this.priceService.getMACD(dto.coinId),
       this.priceService.getBollingerBands(dto.coinId),
-      this.priceService.getATR(dto.coinId),
     ]);
 
     let decision: 'BUY' | 'SELL' | 'SKIP' = 'SKIP';
@@ -319,46 +313,6 @@ export class AnalyzeService {
         aiReasoning: result.aiReasoning,
       },
     });
-
-    // Управление позициями
-    if (previousPrice !== null) {
-      // Сначала проверяем существующую позицию — возможно стоп сработал
-      const closedPosition = await this.positionService.checkAndUpdatePosition(
-        dto.coinId,
-        currentPrice,
-        atr,
-      );
-
-      // Если позиция закрылась по стопу — обновляем баланс
-      if (
-        closedPosition &&
-        closedPosition.status === 'CLOSED' &&
-        closedPosition.pnl !== null
-      ) {
-        await this.walletService.applyDecision(
-          dto.coinId,
-          closedPosition.decision,
-          closedPosition.closedPrice!,
-          closedPosition.entryPrice,
-        );
-      }
-
-      // Если новый сигнал BUY/SELL и нет открытой позиции — открываем
-      if (result.decision !== 'SKIP') {
-        const openPosition = await this.positionService.getOpenPosition(
-          dto.coinId,
-        );
-        if (!openPosition) {
-          await this.positionService.openPosition(
-            dto.coinId,
-            dto.market,
-            result.decision,
-            currentPrice,
-            atr,
-          );
-        }
-      }
-    }
 
     return result;
   }
