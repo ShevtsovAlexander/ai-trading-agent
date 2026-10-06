@@ -1,6 +1,6 @@
 import { IsString, IsNotEmpty } from 'class-validator';
 
-export class AnalyzeDto {
+export class MarketDto {
   @IsString()
   @IsNotEmpty()
   market: string;

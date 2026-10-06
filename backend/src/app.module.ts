@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { AnalyzeModule } from './analyze/analyze.module';
+import { MarketModule } from './market/market.module';
 import { PriceModule } from './price/price.module';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
@@ -14,7 +14,7 @@ import { NewsModule } from './news/news.module';
     ConfigModule.forRoot({ isGlobal: true }), // читает .env, доступен везде
     ScheduleModule.forRoot(),
     PrismaModule,
-    AnalyzeModule,
+    MarketModule,
     PriceModule,
     BacktestModule,
     NewsModule,

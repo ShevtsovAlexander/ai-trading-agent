@@ -15,7 +15,7 @@ model PriceSnapshot {
   @@index([coinId, createdAt])
 }
 
-model TradeDecision {
+model MarketSnapshot {
   id            Int      @id @default(autoincrement())
   market        String
   coinId        String

@@ -1,18 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PriceService } from '../price/price.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { AnalyzeDto } from './analyze.dto';
+import { MarketDto } from './market.dto';
 
 @Injectable()
-export class AnalyzeService {
-  private readonly logger = new Logger(AnalyzeService.name);
+export class MarketService {
+  private readonly logger = new Logger(MarketService.name);
 
   constructor(
     private priceService: PriceService,
     private prisma: PrismaService,
   ) {}
 
-  async analyze(dto: AnalyzeDto) {
+  async captureSnapshot(dto: MarketDto) {
     this.logger.log(`Анализ ${dto.coinId} на рынке ${dto.market}`);
 
     const [
@@ -53,7 +53,7 @@ export class AnalyzeService {
       timestamp: new Date().toISOString(),
     };
 
-    await this.prisma.tradeDecision.create({
+    await this.prisma.marketSnapshot.create({
       data: {
         market: result.market,
         coinId: dto.coinId,
@@ -77,8 +77,15 @@ export class AnalyzeService {
     return result;
   }
 
-  async getDecisions(coinId: string, limit = 50) {
-    return this.prisma.tradeDecision.findMany({
+  async getLatest(coinId: string) {
+    return this.prisma.marketSnapshot.findFirst({
+      where: { coinId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getHistory(coinId: string, limit = 50) {
+    return this.prisma.marketSnapshot.findMany({
       where: { coinId },
       orderBy: { createdAt: 'desc' },
       take: limit,
