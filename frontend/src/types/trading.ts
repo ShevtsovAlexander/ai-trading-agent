@@ -15,21 +15,6 @@ export interface BollingerBands {
     lower: number;
     bandwidth: number;
 }
-export interface Position {
-    id: number;
-    coinId: string;
-    market: string;
-    decision: 'BUY' | 'SELL';
-    entryPrice: number;
-    stopLoss: number;
-    highPrice: number;
-    lowPrice: number;
-    status: 'OPEN' | 'CLOSED';
-    closedPrice: number | null;
-    pnl: number | null;
-    closedAt: string | null;
-    createdAt: string;
-}
 export interface TradeDecision {
     id: number;
     market: string;
@@ -55,22 +40,6 @@ export interface TradeDecision {
     reason: string;
     aiReasoning: string;
     createdAt: string;
-}
-export interface Wallet {
-    id: number;
-    balance: number;
-    initialBalance: number;
-    createdAt: string;
-    updatedAt: string;
-}
-export interface WalletStats {
-    balance: number;
-    initialBalance: number;
-    pnl: number;
-    pnlPct: number;
-    profit: number;
-    loss: number;
-    transactions: number;
 }
 export interface AnalyzeRequest {
     market: string;

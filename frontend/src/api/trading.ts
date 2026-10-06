@@ -2,9 +2,6 @@ import axios from 'axios';
 import type {
     AnalyzeRequest,
     AnalyzeResponse,
-    Position,
-    Wallet,
-    WalletStats,
     TradeDecision,
     PriceSnapshot,
 } from "../types/trading.ts";
@@ -34,41 +31,5 @@ export const getDecisions = async (coinId: string, limit = 50): Promise<TradeDec
     const response = await api.get<TradeDecision[]>(`/analyze/decisions/${coinId}`, {
         params: { limit },
     });
-    return response.data;
-};
-
-export const getWallet = async (): Promise<Wallet> => {
-    const response = await api.get<Wallet>('/wallet');
-    return response.data;
-};
-
-export const getWalletStats = async (
-    period: 'day' | 'week' | 'month' | 'all' = 'all'
-): Promise<WalletStats> => {
-    const response = await api.get<WalletStats>('/wallet/stats', { params: { period } });
-    return response.data;
-};
-
-export const deposit = async (amount: number): Promise<Wallet> => {
-    const response = await api.post<Wallet>('/wallet/deposit', { amount });
-    return response.data;
-};
-
-export const getBalanceHistory = async (
-    period: 'day' | 'week' | 'month' | 'all' = 'all'
-): Promise<{ date: string; balance: number }[]> => {
-    const response = await api.get(`/wallet/history`, { params: { period } });
-    return response.data;
-};
-
-// --- новые ---
-
-export const getPositions = async (): Promise<Position[]> => {
-    const response = await api.get<Position[]>('/positions');
-    return response.data;
-};
-
-export const getOpenPosition = async (coinId: string): Promise<Position | null> => {
-    const response = await api.get<Position | null>(`/positions/${coinId}/open`);
     return response.data;
 };
