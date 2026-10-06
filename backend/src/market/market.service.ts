@@ -37,44 +37,32 @@ export class MarketService {
       this.priceService.getBollingerBands(dto.coinId),
     ]);
 
-    const result = {
-      market: dto.market,
-      currentPrice,
-      previousPrice,
-      movingAverage: movingAverage
-        ? parseFloat(movingAverage.toFixed(2))
-        : null,
-      ema9,
-      ema21,
-      rsi,
-      macd: macd ? { ...macd } : null,
-      bb: bb ? { ...bb } : null,
-      trend,
-      timestamp: new Date().toISOString(),
-    };
-
-    await this.prisma.marketSnapshot.create({
+    // Возвращаем записанную строку, а не рукотворный объект: до T5 этот
+    // метод отдавал вложенные macd/bb и timestamp, а getLatest — плоскую
+    // строку Prisma. Две формы «снимка» давали бы разный хеш на одних
+    // данных, и кэш комментария промахивался бы молча.
+    return this.prisma.marketSnapshot.create({
       data: {
-        market: result.market,
+        market: dto.market,
         coinId: dto.coinId,
-        currentPrice: result.currentPrice,
-        previousPrice: result.previousPrice,
-        movingAverage: result.movingAverage,
-        ema9: result.ema9,
-        ema21: result.ema21,
-        rsi: result.rsi,
-        macdValue: result.macd?.macd,
-        macdSignal: result.macd?.signal,
-        macdHistogram: result.macd?.histogram,
-        bbUpper: result.bb?.upper,
-        bbMiddle: result.bb?.middle,
-        bbLower: result.bb?.lower,
-        bbBandwidth: result.bb?.bandwidth,
-        trend: result.trend,
+        currentPrice,
+        previousPrice,
+        movingAverage: movingAverage
+          ? parseFloat(movingAverage.toFixed(2))
+          : null,
+        ema9,
+        ema21,
+        rsi,
+        macdValue: macd?.macd,
+        macdSignal: macd?.signal,
+        macdHistogram: macd?.histogram,
+        bbUpper: bb?.upper,
+        bbMiddle: bb?.middle,
+        bbLower: bb?.lower,
+        bbBandwidth: bb?.bandwidth,
+        trend,
       },
     });
-
-    return result;
   }
 
   async getLatest(coinId: string) {
