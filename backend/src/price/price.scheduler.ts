@@ -25,7 +25,6 @@ export class PriceScheduler {
         await this.analyzeService.analyze({
           market: coin.market,
           coinId: coin.id,
-          volume: 1500,
         });
         this.logger.log(`${coin.id}: анализ выполнен`);
         await new Promise((resolve) => setTimeout(resolve, 1500));

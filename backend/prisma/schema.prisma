@@ -33,12 +33,6 @@ model TradeDecision {
   bbLower       Float?
   bbBandwidth   Float?
   trend         String
-  decision      String
-  confidence    Int
-  riskScore     Int
-  expectedValue Float
-  reason        String
-  aiReasoning   String
   createdAt     DateTime @default(now())
 
   @@index([coinId, createdAt])

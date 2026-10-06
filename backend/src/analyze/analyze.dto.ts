@@ -1,10 +1,4 @@
-import {
-  IsString,
-  IsNumber,
-  IsOptional,
-  Min,
-  IsNotEmpty,
-} from 'class-validator';
+import { IsString, IsNotEmpty } from 'class-validator';
 
 export class AnalyzeDto {
   @IsString()
@@ -14,8 +8,4 @@ export class AnalyzeDto {
   @IsString()
   @IsNotEmpty()
   coinId: string;
-
-  @IsNumber()
-  @Min(0)
-  volume: number;
 }
