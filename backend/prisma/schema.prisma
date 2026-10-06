@@ -10,8 +10,6 @@ model PriceSnapshot {
   id        Int      @id @default(autoincrement())
   coinId    String
   price     Float
-  high      Float?   // высшая цена свечи
-  low       Float?   // низшая цена свечи
   createdAt DateTime @default(now())
 
   @@index([coinId, createdAt])

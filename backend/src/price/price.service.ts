@@ -49,13 +49,9 @@ export class PriceService {
     // берём предпоследнюю свечу — она уже закрыта
     // последняя ещё формируется
     const candle = response.data[0];
-    const high = parseFloat(candle[2]);
-    const low = parseFloat(candle[3]);
     const price = parseFloat(candle[4]); // close
 
-    await this.prisma.priceSnapshot.create({
-      data: { coinId, price, high, low },
-    });
+    await this.prisma.priceSnapshot.create({ data: { coinId, price } });
 
     return price;
   }
