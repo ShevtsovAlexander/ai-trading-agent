@@ -29,3 +29,10 @@ export const getPriceHistory = async (coinId: string, limit = 50): Promise<Price
     });
     return response.data;
 };
+
+// null — у монеты ещё нет снимков. Бэкенд в этом случае отвечает 200 с пустым
+// телом, и axios отдаёт "" вместо null — нормализуем здесь, а не в App.
+export const getLatest = async (coinId: string): Promise<MarketState | null> => {
+    const response = await api.get<MarketState | "">(`/market/snapshot/${coinId}`);
+    return response.data || null;
+};

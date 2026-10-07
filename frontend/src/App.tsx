@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import styled from "styled-components";
-import { getPriceHistory, getHistory, refreshMarket } from "./api/market";
+import {
+  getPriceHistory,
+  getHistory,
+  getLatest,
+  refreshMarket,
+} from "./api/market";
 import type { PriceSnapshot, MarketSnapshot, MarketState } from "./types/market";
 import { MarketStateCard } from "./components/MarketStateCard";
 import { PriceChart } from "./components/PriceChart";
@@ -13,7 +18,7 @@ const COINS = [
   { id: "solana", label: "SOL", market: "SOL/USDT", color: "#9945FF" },
 ];
 
-type Tab = "trading" | "intel";
+type Tab = "market" | "intel";
 
 export default function App() {
   const [chartLimit, setChartLimit] = useState(288);
@@ -22,7 +27,7 @@ export default function App() {
   const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([]);
   const [lastSnapshot, setLastSnapshot] = useState<MarketState | null>(null);
   const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState<Tab>("trading");
+  const [tab, setTab] = useState<Tab>("market");
 
   // Два разных отказа — два разных флага, и склеивать их нельзя.
   // dataError — чтение данных не удалось: на экране может быть не то, что
@@ -42,16 +47,19 @@ export default function App() {
   const load = useCallback(async () => {
     const token = ++requestRef.current;
     try {
-      const [h, d] = await Promise.all([
+      const [h, d, s] = await Promise.all([
         getPriceHistory(activeCoin.id, chartLimit),
         getHistory(activeCoin.id, chartLimit),
+        getLatest(activeCoin.id),
       ]);
       if (token !== requestRef.current) return; // приехало поздно
       setHistory([...h].reverse());
       setSnapshots(d);
+      // Карточка — из /market/snapshot, а не d[0] истории: строка истории
+      // приходит без aiComment, и секция «AI» была бы пуста всегда.
       // null, а не «оставить прошлое»: у монеты без истории карточка иначе
       // показывала бы данные предыдущей монеты, без ошибки и без баннера.
-      setLastSnapshot(d[0] ?? null);
+      setLastSnapshot(s);
       setDataError(false);
     } catch (e) {
       if (token !== requestRef.current) return;
@@ -60,7 +68,7 @@ export default function App() {
     }
   }, [activeCoin.id, chartLimit]);
 
-  const handleAnalyze = async () => {
+  const handleRefresh = async () => {
     setLoading(true);
     try {
       await refreshMarket({
@@ -69,7 +77,7 @@ export default function App() {
       });
       setActionError(false);
     } catch (e) {
-      console.warn("[dashboard] запуск анализа не удался:", e);
+      console.warn("[dashboard] обновление по кнопке не удалось:", e);
       setActionError(true);
     } finally {
       setLoading(false);
@@ -95,7 +103,7 @@ export default function App() {
       <Inner>
         <Header>
           <Title>
-            AI <Purple>Trading</Purple> Agent
+            AI <Purple>Market</Purple> Dashboard
           </Title>
           <HeaderTabs>
             <CoinTabs>
@@ -112,10 +120,10 @@ export default function App() {
             </CoinTabs>
             <ViewTabs>
               <ViewTab
-                $active={tab === "trading"}
-                onClick={() => setTab("trading")}
+                $active={tab === "market"}
+                onClick={() => setTab("market")}
               >
-                Торговля
+                Рынок
               </ViewTab>
               <ViewTab
                 $active={tab === "intel"}
@@ -127,7 +135,7 @@ export default function App() {
           </HeaderTabs>
         </Header>
 
-        <TabPanel $active={tab === "trading"}>
+        <TabPanel $active={tab === "market"}>
           {dataError && (
             <ErrorBanner>
               ⚠ Нет связи с бэкендом. Данные на экране могут быть устаревшими
@@ -147,12 +155,12 @@ export default function App() {
           <BottomRow>
             <Left>
               {lastSnapshot && <MarketStateCard data={lastSnapshot} />}
-              <AnalyzeBtn onClick={handleAnalyze} disabled={loading}>
-                {loading ? "Анализирую..." : "⚡ Запустить анализ"}
-              </AnalyzeBtn>
+              <RefreshBtn onClick={handleRefresh} disabled={loading}>
+                {loading ? "Обновляю..." : "Обновить данные"}
+              </RefreshBtn>
               {actionError && (
                 <ActionError>
-                  Не удалось запустить анализ — бэкенд отказал. Данные ниже
+                  Не удалось обновить данные — бэкенд отказал. Данные ниже
                   могли не обновиться.
                 </ActionError>
               )}
@@ -279,7 +287,7 @@ const Left = styled.div`
   gap: 12px;
 `;
 
-const AnalyzeBtn = styled.button<{ disabled: boolean }>`
+const RefreshBtn = styled.button<{ disabled: boolean }>`
   width: 100%;
   padding: 12px;
   border-radius: ${({ theme }) => theme.radius.lg};
