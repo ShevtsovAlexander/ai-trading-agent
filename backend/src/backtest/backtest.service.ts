@@ -13,7 +13,8 @@ const INTERVAL_MINUTES: Record<string, number> = {
   '1h': 60, '4h': 240, '1d': 1440,
 };
 
-// Идентично NOISE_THRESHOLD в analyze.service.ts
+// Порог шума живого контура; сам он снят в TASK-0001.3 вместе с вердиктами,
+// здесь остаётся как параметр симуляции
 const NOISE_THRESHOLDS: Record<string, number> = {
   BTCUSDT: 0.002,
   ETHUSDT: 0.0025,

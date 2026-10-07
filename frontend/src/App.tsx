@@ -1,28 +1,16 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import styled from "styled-components";
 import {
-  getWallet,
-  getWalletStats,
   getPriceHistory,
-  getDecisions,
-  analyzeMarket,
-  getBalanceHistory,
-} from "./api/trading";
-import type {
-  WalletStats,
-  PriceSnapshot,
-  TradeDecision,
-  AnalyzeResponse,
-} from "./types/trading";
-import { DecisionCard } from "./components/DecisionCard";
-import { WalletPanel } from "./components/WalletPanel";
+  getHistory,
+  getLatest,
+  refreshMarket,
+} from "./api/market";
+import type { PriceSnapshot, MarketSnapshot, MarketState } from "./types/market";
+import { MarketStateCard } from "./components/MarketStateCard";
 import { PriceChart } from "./components/PriceChart";
-import { DecisionsTable } from "./components/DecisionsTable";
-import { StatsChart } from "./components/StatsPanel";
-import { PositionsPanel } from "./components/PositionsPanel";
+import { IndicatorHistoryTable } from "./components/IndicatorHistoryTable";
 import { NewsPanel } from "./components/NewsPanel";
-import { getPositions } from "./api/trading";
-import type { Position } from "./types/trading";
 
 const COINS = [
   { id: "bitcoin", label: "BTC", market: "BTC/USDT", color: "#F7931A" },
@@ -30,86 +18,92 @@ const COINS = [
   { id: "solana", label: "SOL", market: "SOL/USDT", color: "#9945FF" },
 ];
 
-type Period = "day" | "week" | "month" | "all";
-type Tab = "trading" | "intel";
-
-interface BalancePoint {
-  date: string;
-  balance: number;
-}
+type Tab = "market" | "intel";
 
 export default function App() {
-  const [balancePeriod, setPeriod] = useState<Period>("all");
   const [chartLimit, setChartLimit] = useState(288);
   const [activeCoin, setActiveCoin] = useState(COINS[0]);
-  const [stats, setStats] = useState<WalletStats | null>(null);
   const [history, setHistory] = useState<PriceSnapshot[]>([]);
-  const [decisions, setDecisions] = useState<TradeDecision[]>([]);
-  const [lastDecision, setLastDecision] = useState<
-    TradeDecision | AnalyzeResponse | null
-  >(null);
-  const [balanceHistory, setBalanceHistory] = useState<BalancePoint[]>([]);
+  const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([]);
+  const [lastSnapshot, setLastSnapshot] = useState<MarketState | null>(null);
   const [loading, setLoading] = useState(false);
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [tab, setTab] = useState<Tab>("trading");
+  const [tab, setTab] = useState<Tab>("market");
 
-  const fetchData = useCallback(async () => {
-    const [w, s, h, d, bh, pos] = await Promise.all([
-      getWallet(),
-      getWalletStats("all"),
-      getPriceHistory(activeCoin.id, chartLimit),
-      getDecisions(activeCoin.id, chartLimit),
-      getBalanceHistory(balancePeriod),
-      getPositions(),
-    ]);
-    setStats(s);
-    setHistory([...h].reverse());
-    setDecisions(d);
-    setBalanceHistory(bh);
-    setPositions(pos);
-    if (d.length > 0) setLastDecision(d[0]);
-    return w;
-  }, [activeCoin.id, balancePeriod, chartLimit]);
+  // Два разных отказа — два разных флага, и склеивать их нельзя.
+  // dataError — чтение данных не удалось: на экране может быть не то, что
+  // в бэкенде. actionError — не сработала команда обновления; данные при
+  // этом могут быть свежими, и говорить «данные недоступны» было бы ложью.
+  // Молчаливое console.warn не годится ни для того, ни для другого:
+  // критерий 17 PRD требует, чтобы отказ был виден в интерфейсе.
+  const [dataError, setDataError] = useState(false);
+  const [actionError, setActionError] = useState(false);
 
-  const handleAnalyze = async () => {
+  // Токен запроса: ответ, приехавший после смены монеты, диапазона или
+  // после следующего опроса, в состояние не попадает. Без него поздний
+  // ответ прошлой монеты закрашивает экран новой, а флаг ошибки рапортует
+  // «всё в порядке» на данных не той монеты.
+  const requestRef = useRef(0);
+
+  const load = useCallback(async () => {
+    const token = ++requestRef.current;
+    try {
+      const [h, d, s] = await Promise.all([
+        getPriceHistory(activeCoin.id, chartLimit),
+        getHistory(activeCoin.id, chartLimit),
+        getLatest(activeCoin.id),
+      ]);
+      if (token !== requestRef.current) return; // приехало поздно
+      setHistory([...h].reverse());
+      setSnapshots(d);
+      // Карточка — из /market/snapshot, а не d[0] истории: строка истории
+      // приходит без aiComment, и секция «AI» была бы пуста всегда.
+      // null, а не «оставить прошлое»: у монеты без истории карточка иначе
+      // показывала бы данные предыдущей монеты, без ошибки и без баннера.
+      setLastSnapshot(s);
+      setDataError(false);
+    } catch (e) {
+      if (token !== requestRef.current) return;
+      console.warn("[dashboard] обновление данных не удалось:", e);
+      setDataError(true);
+    }
+  }, [activeCoin.id, chartLimit]);
+
+  const handleRefresh = async () => {
     setLoading(true);
     try {
-      await analyzeMarket({
+      await refreshMarket({
         market: activeCoin.market,
         coinId: activeCoin.id,
-        volume: 1500,
       });
-      await fetchData();
+      setActionError(false);
+    } catch (e) {
+      console.warn("[dashboard] обновление по кнопке не удалось:", e);
+      setActionError(true);
     } finally {
       setLoading(false);
     }
+
+    // Перечитываем данные независимо от исхода команды, и флаг данных
+    // ставит именно load(): упавший POST при живых GET не должен выдавать
+    // «данные недоступны».
+    await load();
   };
 
-  // wallet только для initialBalance в StatsChart
-  const [initialBalance, setInitialBalance] = useState(100);
-
   useEffect(() => {
-    let cancelled = false;
-
-    const run = async () => {
-      const w = await fetchData();
-      if (!cancelled) setInitialBalance(w.initialBalance);
-    };
-
-    run();
-    const interval = setInterval(run, 5 * 60 * 1000 + 10000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [fetchData]);
+    // Первая загрузка — из микротаски, а не прямым вызовом в теле эффекта:
+    // setState внутри load() иначе попадает в тот же коммит и даёт каскадный
+    // ререндер (react-hooks/set-state-in-effect). Семантика та же.
+    Promise.resolve().then(load);
+    const interval = setInterval(load, 5 * 60 * 1000 + 10000);
+    return () => clearInterval(interval);
+  }, [load]);
 
   return (
     <Wrapper>
       <Inner>
         <Header>
           <Title>
-            AI <Purple>Trading</Purple> Agent
+            AI <Purple>Market</Purple> Dashboard
           </Title>
           <HeaderTabs>
             <CoinTabs>
@@ -125,45 +119,53 @@ export default function App() {
               ))}
             </CoinTabs>
             <ViewTabs>
-              <ViewTab $active={tab === "trading"} onClick={() => setTab("trading")}>
-                Торговля
+              <ViewTab
+                $active={tab === "market"}
+                onClick={() => setTab("market")}
+              >
+                Рынок
               </ViewTab>
-              <ViewTab $active={tab === "intel"} onClick={() => setTab("intel")}>
+              <ViewTab
+                $active={tab === "intel"}
+                onClick={() => setTab("intel")}
+              >
                 Инфополе
               </ViewTab>
             </ViewTabs>
           </HeaderTabs>
         </Header>
 
-        <TabPanel $active={tab === "trading"}>
+        <TabPanel $active={tab === "market"}>
+          {dataError && (
+            <ErrorBanner>
+              ⚠ Нет связи с бэкендом. Данные на экране могут быть устаревшими
+              или отсутствовать.
+            </ErrorBanner>
+          )}
+
           <TopRow>
-            <WalletPanel stats={stats} />
             <PriceChart
               history={history}
-              decisions={decisions}
+              snapshots={snapshots}
               coin={activeCoin}
               onRangeChange={setChartLimit}
             />
           </TopRow>
 
-          <MidRow>
-            <StatsChart
-              data={balanceHistory}
-              initialBalance={initialBalance}
-              period={balancePeriod}
-              onPeriodChange={setPeriod}
-            />
-          </MidRow>
-
           <BottomRow>
             <Left>
-              {lastDecision && <DecisionCard data={lastDecision} />}
-              <PositionsPanel positions={positions} />
-              <AnalyzeBtn onClick={handleAnalyze} disabled={loading}>
-                {loading ? "Анализирую..." : "⚡ Запустить анализ"}
-              </AnalyzeBtn>
+              {lastSnapshot && <MarketStateCard data={lastSnapshot} />}
+              <RefreshBtn onClick={handleRefresh} disabled={loading}>
+                {loading ? "Обновляю..." : "Обновить данные"}
+              </RefreshBtn>
+              {actionError && (
+                <ActionError>
+                  Не удалось обновить данные — бэкенд отказал. Данные ниже
+                  могли не обновиться.
+                </ActionError>
+              )}
             </Left>
-            <DecisionsTable decisions={decisions} />
+            <IndicatorHistoryTable snapshots={snapshots} />
           </BottomRow>
         </TabPanel>
 
@@ -175,7 +177,7 @@ export default function App() {
   );
 }
 
-// --- styled (без изменений) ---
+// --- styled ---
 
 const Wrapper = styled.div`
   min-height: 100vh;
@@ -224,7 +226,8 @@ const ViewTab = styled.button<{ $active: boolean }>`
   padding: 6px 16px;
   border-radius: ${({ theme }) => theme.radius.md};
   border: 1px solid
-    ${({ $active, theme }) => ($active ? theme.colors.purple : theme.colors.border)};
+    ${({ $active, theme }) =>
+      $active ? theme.colors.purple : theme.colors.border};
   background: ${({ $active, theme }) =>
     $active ? `${theme.colors.purple}22` : "transparent"};
   color: ${({ $active, theme }) =>
@@ -252,14 +255,23 @@ const CoinBtn = styled.button<{ active: boolean; color: string }>`
   transition: all 0.15s;
 `;
 
-const TopRow = styled.div`
-  display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 16px;
+const ErrorBanner = styled.div`
   margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: ${({ theme }) => theme.radius.md};
+  border: 1px solid ${({ theme }) => theme.colors.amber};
+  background: ${({ theme }) => `${theme.colors.amber}1a`};
+  color: ${({ theme }) => theme.colors.amber};
+  font-size: ${({ theme }) => theme.fontSize.md};
 `;
 
-const MidRow = styled.div`
+const ActionError = styled.div`
+  color: ${({ theme }) => theme.colors.amber};
+  font-size: ${({ theme }) => theme.fontSize.md};
+`;
+
+// Кошелёк уехал из левой колонки в T6 — график занимает всю ширину
+const TopRow = styled.div`
   margin-bottom: 16px;
 `;
 
@@ -275,7 +287,7 @@ const Left = styled.div`
   gap: 12px;
 `;
 
-const AnalyzeBtn = styled.button<{ disabled: boolean }>`
+const RefreshBtn = styled.button<{ disabled: boolean }>`
   width: 100%;
   padding: 12px;
   border-radius: ${({ theme }) => theme.radius.lg};

@@ -3,10 +3,10 @@ import { HttpModule } from '@nestjs/axios';
 import { PriceService } from './price.service';
 import { PriceController } from './price.controller';
 import { PriceScheduler } from './price.scheduler';
-import { AnalyzeModule } from '../analyze/analyze.module';
+import { MarketModule } from '../market/market.module';
 
 @Module({
-  imports: [HttpModule, forwardRef(() => AnalyzeModule)],
+  imports: [HttpModule, forwardRef(() => MarketModule)],
   providers: [PriceService, PriceScheduler],
   controllers: [PriceController],
   exports: [PriceService],

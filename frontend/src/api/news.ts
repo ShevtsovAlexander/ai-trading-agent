@@ -1,4 +1,4 @@
-import { api } from './trading';
+import { api } from './client';
 
 export interface NewsItem {
     id: string;

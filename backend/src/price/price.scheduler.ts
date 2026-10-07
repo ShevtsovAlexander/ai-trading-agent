@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PriceService } from './price.service';
-import { AnalyzeService } from '../analyze/analyze.service';
+import { MarketService } from '../market/market.service';
 
 @Injectable()
 export class PriceScheduler {
@@ -9,11 +9,11 @@ export class PriceScheduler {
 
   constructor(
     private priceService: PriceService,
-    private analyzeService: AnalyzeService,
+    private marketService: MarketService,
   ) {}
 
   @Cron('0 */5 * * * *')
-  async collectAndAnalyze() {
+  async collectAndStore() {
     const coins = [
       { id: 'bitcoin', market: 'BTC/USDT' },
       { id: 'ethereum', market: 'ETH/USDT' },
@@ -22,15 +22,14 @@ export class PriceScheduler {
 
     for (const coin of coins) {
       try {
-        await this.analyzeService.analyze({
+        await this.marketService.captureSnapshot({
           market: coin.market,
           coinId: coin.id,
-          volume: 1500,
         });
-        this.logger.log(`${coin.id}: анализ выполнен`);
+        this.logger.log(`${coin.id}: снимок записан`);
         await new Promise((resolve) => setTimeout(resolve, 1500));
       } catch (error) {
-        this.logger.error(`Ошибка анализа ${coin.id}: ${error.message}`);
+        this.logger.error(`Ошибка снимка ${coin.id}: ${error.message}`);
       }
     }
   }
