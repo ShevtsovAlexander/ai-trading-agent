@@ -5,12 +5,6 @@ interface Props {
   decisions: TradeDecision[];
 }
 
-const DECISION_COLORS = {
-  BUY: "#4ade80",
-  SELL: "#f87171",
-  SKIP: "#f59e0b",
-};
-
 const COIN_LABELS: Record<string, string> = {
   bitcoin: "BTC",
   ethereum: "ETH",
@@ -52,13 +46,13 @@ const Title = styled.div`
 const Table = styled.div`
   display: flex;
   flex-direction: column;
-  min-width: 560px;
+  min-width: 320px;
 `;
 
-// 7 колонок: монета | цена | решение | уверенность | риск | RSI | время
+// 4 колонки: монета | цена | RSI | время
 const Row = styled.div`
   display: grid;
-  grid-template-columns: 80px 100px 80px 90px 60px 60px 1fr;
+  grid-template-columns: 80px 100px 60px 1fr;
   gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid ${({ theme }) => theme.colors.borderLight};
@@ -105,15 +99,6 @@ const Dot = styled.span<{ color: string }>`
   flex-shrink: 0;
 `;
 
-const Badge = styled.span<{ decision: "BUY" | "SELL" | "SKIP" }>`
-  padding: 2px 8px;
-  border-radius: ${({ theme }) => theme.radius.sm};
-  font-size: ${({ theme }) => theme.fontSize.xs};
-  font-weight: 600;
-  background: ${({ decision }) => `${DECISION_COLORS[decision]}22`};
-  color: ${({ decision }) => DECISION_COLORS[decision]};
-`;
-
 const Empty = styled.div`
   font-size: ${({ theme }) => theme.fontSize.md};
   color: ${({ theme }) => theme.colors.textMuted};
@@ -130,12 +115,6 @@ const rsiColor = (rsi: number | null): string | undefined => {
   return undefined;
 };
 
-const riskColor = (risk: number): string => {
-  if (risk <= 3) return "#4ade80";
-  if (risk <= 6) return "#f59e0b";
-  return "#f87171";
-};
-
 const formatTime = (iso: string): string => {
   const d = new Date(iso);
   return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
@@ -143,52 +122,37 @@ const formatTime = (iso: string): string => {
 
 // --- component ---
 
-export const DecisionsTable = ({ decisions }: Props) => {
+export const IndicatorHistoryTable = ({ decisions }: Props) => {
   return (
     <Container>
       <Inner>
-        <Title>История решений</Title>
+        <Title>История индикаторов</Title>
         <Table>
-        <HeadRow>
-          <Th>Монета</Th>
-          <Th>Цена</Th>
-          <Th>Решение</Th>
-          <Th>Уверен.</Th>
-          <Th>Риск</Th>
-          <Th>RSI</Th>
-          <Th>Время</Th>
-        </HeadRow>
+          <HeadRow>
+            <Th>Монета</Th>
+            <Th>Цена</Th>
+            <Th>RSI</Th>
+            <Th>Время</Th>
+          </HeadRow>
 
-        {decisions.length === 0 && <Empty>Нет данных</Empty>}
+          {decisions.length === 0 && <Empty>Нет данных</Empty>}
 
-        {decisions.map((d) => (
-          <Row key={d.id}>
-            <CoinCell>
-              <Dot color={COIN_COLORS[d.coinId] ?? "#888"} />
-              {COIN_LABELS[d.coinId] ?? d.coinId.toUpperCase()}
-            </CoinCell>
+          {decisions.map((d) => (
+            <Row key={d.id}>
+              <CoinCell>
+                <Dot color={COIN_COLORS[d.coinId] ?? "#888"} />
+                {COIN_LABELS[d.coinId] ?? d.coinId.toUpperCase()}
+              </CoinCell>
 
-            <Td>${d.currentPrice.toLocaleString()}</Td>
+              <Td>${d.currentPrice.toLocaleString()}</Td>
 
-            <Td>
-              <Badge decision={d.decision}>{d.decision}</Badge>
-            </Td>
+              <TdColored color={rsiColor(d.rsi)}>
+                {d.rsi != null ? d.rsi.toFixed(1) : "—"}
+              </TdColored>
 
-            <TdColored color={d.confidence >= 70 ? "#4ade80" : undefined}>
-              {d.confidence}%
-            </TdColored>
-
-            <TdColored color={riskColor(d.riskScore)}>
-              {d.riskScore}/10
-            </TdColored>
-
-            <TdColored color={rsiColor(d.rsi)}>
-              {d.rsi != null ? d.rsi.toFixed(1) : "—"}
-            </TdColored>
-
-            <Td>{formatTime(d.createdAt)}</Td>
-          </Row>
-        ))}
+              <Td>{formatTime(d.createdAt)}</Td>
+            </Row>
+          ))}
         </Table>
       </Inner>
     </Container>

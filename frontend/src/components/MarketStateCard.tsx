@@ -5,12 +5,6 @@ interface Props {
     data: TradeDecision | AnalyzeResponse;
 }
 
-const DECISION_COLORS = {
-    BUY: '#4ade80',
-    SELL: '#f87171',
-    SKIP: '#f59e0b',
-};
-
 const TREND_LABELS = {
     up: '↑ Рост',
     down: '↓ Падение',
@@ -39,15 +33,6 @@ const Market = styled.div`
     color: ${({ theme }) => theme.colors.text};
 `;
 
-const Badge = styled.span<{ decision: 'BUY' | 'SELL' | 'SKIP' }>`
-    padding: 3px 12px;
-    border-radius: ${({ theme }) => theme.radius.sm};
-    font-size: ${({ theme }) => theme.fontSize.md};
-    font-weight: 600;
-    background: ${({ decision }) => `${DECISION_COLORS[decision]}22`};
-    color: ${({ decision }) => DECISION_COLORS[decision]};
-`;
-
 const StatsGrid = styled.div`
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -69,42 +54,6 @@ const StatValue = styled.div<{ color?: string }>`
     color: ${({ color, theme }) => color ?? theme.colors.text};
 `;
 
-const BarRow = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
-`;
-
-const BarLabel = styled.span`
-    font-size: ${({ theme }) => theme.fontSize.xs};
-    color: ${({ theme }) => theme.colors.textMuted};
-    width: 80px;
-`;
-
-const BarTrack = styled.div`
-    flex: 1;
-    height: 4px;
-    background: ${({ theme }) => theme.colors.border};
-    border-radius: 99px;
-    overflow: hidden;
-`;
-
-const BarFill = styled.div<{ width: number; color: string }>`
-    height: 100%;
-    width: ${({ width }) => Math.min(width, 100)}%;
-    background: ${({ color }) => color};
-    border-radius: 99px;
-`;
-
-const BarValue = styled.span`
-    font-size: ${({ theme }) => theme.fontSize.sm};
-    font-weight: 500;
-    color: ${({ theme }) => theme.colors.text};
-    width: 32px;
-    text-align: right;
-`;
-
 const Divider = styled.div`
     border-top: 1px solid ${({ theme }) => theme.colors.border};
     margin: 10px 0;
@@ -115,13 +64,6 @@ const SectionTitle = styled.div`
     color: ${({ theme }) => theme.colors.textMuted};
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 8px;
-`;
-
-const Reason = styled.p`
-    font-size: ${({ theme }) => theme.fontSize.md};
-    color: ${({ theme }) => theme.colors.textSecondary};
-    line-height: 1.5;
     margin-bottom: 8px;
 `;
 
@@ -151,19 +93,18 @@ const macdColor = (histogram: number | null) => {
 
 // --- component ---
 
-export const DecisionCard = ({ data }: Props) => {
+export const MarketStateCard = ({ data }: Props) => {
     const { ema9, ema21, rsi } = data;
 
-    const isAnalyzeResponse = (d: TradeDecision | AnalyzeResponse): d is AnalyzeResponse =>
-        'macd' in d && d.macd != null;
-
-    const macd = isAnalyzeResponse(data) ? data.macd : data.macdValue != null ? {
+    // Форма снимка одна — плоская (нормализована в T5), поэтому type guard,
+    // различавший её с вложенной, и ветки под вложенную убраны.
+    const macd = data.macdValue != null ? {
         macd: data.macdValue,
         signal: data.macdSignal!,
         histogram: data.macdHistogram!,
     } : null;
 
-    const bb = isAnalyzeResponse(data) ? data.bb : data.bbUpper != null ? {
+    const bb = data.bbUpper != null ? {
         upper: data.bbUpper,
         middle: data.bbMiddle!,
         lower: data.bbLower!,
@@ -174,7 +115,6 @@ export const DecisionCard = ({ data }: Props) => {
         <Container>
             <Header>
                 <Market>{data.market}</Market>
-                <Badge decision={data.decision}>{data.decision}</Badge>
             </Header>
 
             {/* Цена + MA5 + тренд */}
@@ -247,43 +187,8 @@ export const DecisionCard = ({ data }: Props) => {
                 </StatsGrid>
             )}
 
-            <Divider />
-
-            {/* Уверенность + риск */}
-            <BarRow>
-                <BarLabel>Уверенность</BarLabel>
-                <BarTrack>
-                    <BarFill width={data.confidence} color="#a78bfa" />
-                </BarTrack>
-                <BarValue>{data.confidence}%</BarValue>
-            </BarRow>
-
-            <BarRow>
-                <BarLabel>Риск</BarLabel>
-                <BarTrack>
-                    <BarFill width={data.riskScore * 10} color="#f59e0b" />
-                </BarTrack>
-                <BarValue>{data.riskScore}/10</BarValue>
-            </BarRow>
-
-            {/* Expected Value */}
-            <BarRow>
-                <BarLabel>EV</BarLabel>
-                <BarTrack>
-                    <BarFill
-                        width={Math.abs(data.expectedValue) * 10000}
-                        color={data.expectedValue >= 0 ? '#4ade80' : '#f87171'}
-                    />
-                </BarTrack>
-                <BarValue style={{ width: 60 }}>
-                    {data.expectedValue >= 0 ? '+' : ''}{data.expectedValue.toFixed(4)}
-                </BarValue>
-            </BarRow>
 
             <Divider />
-
-            <SectionTitle>Сигналы</SectionTitle>
-            <Reason>{data.reason}</Reason>
 
             <SectionTitle>AI</SectionTitle>
             <AiReasoning>{data.aiReasoning}</AiReasoning>

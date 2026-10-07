@@ -111,12 +111,6 @@ const RangeBtn = styled.button<{ active: boolean }>`
   transition: all 0.15s;
 `;
 
-const DECISION_COLORS = {
-  BUY: "#4ade80",
-  SELL: "#f87171",
-  SKIP: "#f59e0b",
-};
-
 /**
  * Матчим каждый PriceSnapshot к ближайшему TradeDecision по времени (±5 мин).
  * Прямой матч по createdAt ненадёжен — timestamps разные.
@@ -146,7 +140,24 @@ const matchDecisions = (
 
 // --- tooltip ---
 
-const CustomTooltip = ({ active, payload }: any) => {
+// Точка графика: снимок цены плюс подмешанные индикаторы из снимка рынка.
+// Типизирована явно, чтобы тултип не ходил через any — recharts отдаёт
+// элемент данных в payload[n].payload как есть.
+interface ChartPoint {
+  createdAt: string;
+  price: number;
+  ema9: number | null;
+  ema21: number | null;
+  bbUpper: number | null;
+  bbLower: number | null;
+}
+
+interface TooltipProps {
+  active?: boolean;
+  payload?: { payload: ChartPoint }[];
+}
+
+const CustomTooltip = ({ active, payload }: TooltipProps) => {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
 
@@ -169,61 +180,12 @@ const CustomTooltip = ({ active, payload }: any) => {
           EMA21: ${d.ema21.toLocaleString()}
         </div>
       )}
-      {d.bbUpper && (
+      {d.bbUpper != null && d.bbLower != null && (
         <div style={{ color: "#475569" }}>
           BB: ${d.bbLower.toLocaleString()} – ${d.bbUpper.toLocaleString()}
         </div>
       )}
-      {d.decision && (
-        <div
-          style={{
-            color:
-              DECISION_COLORS[
-                d.decision.decision as keyof typeof DECISION_COLORS
-              ],
-            marginTop: 4,
-            fontWeight: 600,
-          }}
-        >
-          {d.decision.decision} · {d.decision.confidence}%
-        </div>
-      )}
     </TooltipContainer>
-  );
-};
-
-// --- custom dot для BUY/SELL/SKIP ---
-
-const CustomDot = (props: any) => {
-  const { cx, cy, payload } = props;
-  if (!payload.decision) return null;
-
-  const dec = payload.decision.decision as keyof typeof DECISION_COLORS;
-  if (dec === "SKIP") return null; // SKIP не рисуем — шум
-
-  const color = DECISION_COLORS[dec];
-
-  return (
-    <g>
-      <circle
-        cx={cx}
-        cy={cy}
-        r={5}
-        fill={color}
-        stroke="#0d0d0d"
-        strokeWidth={2}
-      />
-      <text
-        x={cx}
-        y={cy - 10}
-        textAnchor="middle"
-        fontSize={9}
-        fill={color}
-        fontWeight={600}
-      >
-        {dec}
-      </text>
-    </g>
   );
 };
 
@@ -370,7 +332,7 @@ export const PriceChart = ({
             dataKey="price"
             stroke={coin.color}
             strokeWidth={2}
-            dot={<CustomDot />}
+            dot={false}
             activeDot={{ r: 4, fill: coin.color }}
             isAnimationActive={false}
           />

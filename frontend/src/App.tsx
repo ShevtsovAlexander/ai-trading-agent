@@ -6,9 +6,9 @@ import type {
   TradeDecision,
   AnalyzeResponse,
 } from "./types/trading";
-import { DecisionCard } from "./components/DecisionCard";
+import { MarketStateCard } from "./components/MarketStateCard";
 import { PriceChart } from "./components/PriceChart";
-import { DecisionsTable } from "./components/DecisionsTable";
+import { IndicatorHistoryTable } from "./components/IndicatorHistoryTable";
 import { NewsPanel } from "./components/NewsPanel";
 
 const COINS = [
@@ -89,12 +89,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    load();
+    // Первая загрузка — из микротаски, а не прямым вызовом в теле эффекта:
+    // setState внутри load() иначе попадает в тот же коммит и даёт каскадный
+    // ререндер (react-hooks/set-state-in-effect). Семантика та же.
+    Promise.resolve().then(load);
     const interval = setInterval(load, 5 * 60 * 1000 + 10000);
-    return () => {
-      requestRef.current++; // ответы в полёте в состояние не попадут
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, [load]);
 
   return (
@@ -153,7 +153,7 @@ export default function App() {
 
           <BottomRow>
             <Left>
-              {lastDecision && <DecisionCard data={lastDecision} />}
+              {lastDecision && <MarketStateCard data={lastDecision} />}
               <AnalyzeBtn onClick={handleAnalyze} disabled={loading}>
                 {loading ? "Анализирую..." : "⚡ Запустить анализ"}
               </AnalyzeBtn>
@@ -164,7 +164,7 @@ export default function App() {
                 </ActionError>
               )}
             </Left>
-            <DecisionsTable decisions={decisions} />
+            <IndicatorHistoryTable decisions={decisions} />
           </BottomRow>
         </TabPanel>
 
