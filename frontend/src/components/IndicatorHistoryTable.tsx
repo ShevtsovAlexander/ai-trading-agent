@@ -1,8 +1,8 @@
 import styled from "styled-components";
-import type { TradeDecision } from "../types/trading";
+import type { MarketSnapshot } from "../types/market";
 
 interface Props {
-  decisions: TradeDecision[];
+  snapshots: MarketSnapshot[];
 }
 
 const COIN_LABELS: Record<string, string> = {
@@ -122,7 +122,7 @@ const formatTime = (iso: string): string => {
 
 // --- component ---
 
-export const IndicatorHistoryTable = ({ decisions }: Props) => {
+export const IndicatorHistoryTable = ({ snapshots }: Props) => {
   return (
     <Container>
       <Inner>
@@ -135,9 +135,9 @@ export const IndicatorHistoryTable = ({ decisions }: Props) => {
             <Th>Время</Th>
           </HeadRow>
 
-          {decisions.length === 0 && <Empty>Нет данных</Empty>}
+          {snapshots.length === 0 && <Empty>Нет данных</Empty>}
 
-          {decisions.map((d) => (
+          {snapshots.map((d) => (
             <Row key={d.id}>
               <CoinCell>
                 <Dot color={COIN_COLORS[d.coinId] ?? "#888"} />

@@ -1,8 +1,8 @@
 import styled from 'styled-components';
-import type { TradeDecision, AnalyzeResponse } from '../types/trading';
+import type { MarketState } from '../types/market';
 
 interface Props {
-    data: TradeDecision | AnalyzeResponse;
+    data: MarketState;
 }
 
 const TREND_LABELS = {
@@ -191,7 +191,7 @@ export const MarketStateCard = ({ data }: Props) => {
             <Divider />
 
             <SectionTitle>AI</SectionTitle>
-            <AiReasoning>{data.aiReasoning}</AiReasoning>
+            <AiReasoning>{data.aiComment}</AiReasoning>
         </Container>
     );
 };

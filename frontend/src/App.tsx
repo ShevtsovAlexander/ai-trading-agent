@@ -1,11 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import styled from "styled-components";
-import { getPriceHistory, getDecisions, analyzeMarket } from "./api/trading";
-import type {
-  PriceSnapshot,
-  TradeDecision,
-  AnalyzeResponse,
-} from "./types/trading";
+import { getPriceHistory, getHistory, refreshMarket } from "./api/market";
+import type { PriceSnapshot, MarketSnapshot, MarketState } from "./types/market";
 import { MarketStateCard } from "./components/MarketStateCard";
 import { PriceChart } from "./components/PriceChart";
 import { IndicatorHistoryTable } from "./components/IndicatorHistoryTable";
@@ -23,10 +19,8 @@ export default function App() {
   const [chartLimit, setChartLimit] = useState(288);
   const [activeCoin, setActiveCoin] = useState(COINS[0]);
   const [history, setHistory] = useState<PriceSnapshot[]>([]);
-  const [decisions, setDecisions] = useState<TradeDecision[]>([]);
-  const [lastDecision, setLastDecision] = useState<
-    TradeDecision | AnalyzeResponse | null
-  >(null);
+  const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([]);
+  const [lastSnapshot, setLastSnapshot] = useState<MarketState | null>(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<Tab>("trading");
 
@@ -50,14 +44,14 @@ export default function App() {
     try {
       const [h, d] = await Promise.all([
         getPriceHistory(activeCoin.id, chartLimit),
-        getDecisions(activeCoin.id, chartLimit),
+        getHistory(activeCoin.id, chartLimit),
       ]);
       if (token !== requestRef.current) return; // приехало поздно
       setHistory([...h].reverse());
-      setDecisions(d);
+      setSnapshots(d);
       // null, а не «оставить прошлое»: у монеты без истории карточка иначе
       // показывала бы данные предыдущей монеты, без ошибки и без баннера.
-      setLastDecision(d[0] ?? null);
+      setLastSnapshot(d[0] ?? null);
       setDataError(false);
     } catch (e) {
       if (token !== requestRef.current) return;
@@ -69,10 +63,9 @@ export default function App() {
   const handleAnalyze = async () => {
     setLoading(true);
     try {
-      await analyzeMarket({
+      await refreshMarket({
         market: activeCoin.market,
         coinId: activeCoin.id,
-        volume: 1500,
       });
       setActionError(false);
     } catch (e) {
@@ -145,7 +138,7 @@ export default function App() {
           <TopRow>
             <PriceChart
               history={history}
-              decisions={decisions}
+              snapshots={snapshots}
               coin={activeCoin}
               onRangeChange={setChartLimit}
             />
@@ -153,7 +146,7 @@ export default function App() {
 
           <BottomRow>
             <Left>
-              {lastDecision && <MarketStateCard data={lastDecision} />}
+              {lastSnapshot && <MarketStateCard data={lastSnapshot} />}
               <AnalyzeBtn onClick={handleAnalyze} disabled={loading}>
                 {loading ? "Анализирую..." : "⚡ Запустить анализ"}
               </AnalyzeBtn>
@@ -164,7 +157,7 @@ export default function App() {
                 </ActionError>
               )}
             </Left>
-            <IndicatorHistoryTable decisions={decisions} />
+            <IndicatorHistoryTable snapshots={snapshots} />
           </BottomRow>
         </TabPanel>
 

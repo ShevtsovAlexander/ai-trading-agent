@@ -8,7 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import type { PriceSnapshot, TradeDecision } from "../types/trading";
+import type { PriceSnapshot, MarketSnapshot } from "../types/market";
 import { useState } from "react";
 
 type ChartRange = "1h" | "4h" | "12h" | "24h" | "2w" | "1m" | "3m";
@@ -22,7 +22,7 @@ interface Coin {
 
 interface Props {
   history: PriceSnapshot[];
-  decisions: TradeDecision[];
+  snapshots: MarketSnapshot[];
   coin: Coin;
   onRangeChange: (limit: number) => void;
 }
@@ -112,29 +112,29 @@ const RangeBtn = styled.button<{ active: boolean }>`
 `;
 
 /**
- * Матчим каждый PriceSnapshot к ближайшему TradeDecision по времени (±5 мин).
+ * Матчим каждый PriceSnapshot к ближайшему MarketSnapshot по времени (±5 мин).
  * Прямой матч по createdAt ненадёжен — timestamps разные.
  */
-const matchDecisions = (
+const matchSnapshots = (
   history: PriceSnapshot[],
-  decisions: TradeDecision[]
-): (PriceSnapshot & { decision: TradeDecision | null })[] => {
-  if (!decisions.length) return history.map((h) => ({ ...h, decision: null }));
+  snapshots: MarketSnapshot[]
+): (PriceSnapshot & { snapshot: MarketSnapshot | null })[] => {
+  if (!snapshots.length) return history.map((h) => ({ ...h, snapshot: null }));
 
   return history.map((h) => {
     const hTime = new Date(h.createdAt).getTime();
-    let closest: TradeDecision | null = null;
+    let closest: MarketSnapshot | null = null;
     let minDiff = 5 * 60 * 1000; // 5 минут — макс окно
 
-    for (const d of decisions) {
-      const diff = Math.abs(new Date(d.createdAt).getTime() - hTime);
+    for (const s of snapshots) {
+      const diff = Math.abs(new Date(s.createdAt).getTime() - hTime);
       if (diff < minDiff) {
         minDiff = diff;
-        closest = d;
+        closest = s;
       }
     }
 
-    return { ...h, decision: closest };
+    return { ...h, snapshot: closest };
   });
 };
 
@@ -201,7 +201,7 @@ const getTickFormatter = (range: ChartRange) => (v: string) => {
 
 export const PriceChart = ({
   history,
-  decisions,
+  snapshots,
   coin,
   onRangeChange,
 }: Props) => {
@@ -212,15 +212,15 @@ export const PriceChart = ({
     onRangeChange(r.limit);
   };
 
-  const matched = matchDecisions(history, decisions);
+  const matched = matchSnapshots(history, snapshots);
 
   const data = matched.map((h) => ({
     ...h,
-    ema9: h.decision?.ema9 ?? null,
-    ema21: h.decision?.ema21 ?? null,
-    bbUpper: h.decision?.bbUpper ?? null,
-    bbLower: h.decision?.bbLower ?? null,
-    bbRange: h.decision ? [h.decision.bbLower, h.decision.bbUpper] : null,
+    ema9: h.snapshot?.ema9 ?? null,
+    ema21: h.snapshot?.ema21 ?? null,
+    bbUpper: h.snapshot?.bbUpper ?? null,
+    bbLower: h.snapshot?.bbLower ?? null,
+    bbRange: h.snapshot ? [h.snapshot.bbLower, h.snapshot.bbUpper] : null,
   }));
 
   const prices = history.map((h) => h.price);
