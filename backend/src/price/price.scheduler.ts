@@ -26,10 +26,10 @@ export class PriceScheduler {
           market: coin.market,
           coinId: coin.id,
         });
-        this.logger.log(`${coin.id}: анализ выполнен`);
+        this.logger.log(`${coin.id}: снимок записан`);
         await new Promise((resolve) => setTimeout(resolve, 1500));
       } catch (error) {
-        this.logger.error(`Ошибка анализа ${coin.id}: ${error.message}`);
+        this.logger.error(`Ошибка снимка ${coin.id}: ${error.message}`);
       }
     }
   }

@@ -13,7 +13,7 @@ export class MarketService {
   ) {}
 
   async captureSnapshot(dto: MarketDto) {
-    this.logger.log(`Анализ ${dto.coinId} на рынке ${dto.market}`);
+    this.logger.log(`Снимок рынка ${dto.coinId} (${dto.market})`);
 
     const [
       currentPrice,

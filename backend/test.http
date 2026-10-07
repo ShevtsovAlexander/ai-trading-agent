@@ -1,13 +1,15 @@
-POST http://localhost:3000/analyze
+POST http://localhost:3000/market/refresh
 Content-Type: application/json
 
 {
   "market": "BTC/USDT",
-  "coinId": "bitcoin",
-  "volume": 1500
+  "coinId": "bitcoin"
 }
 
 ###
 
-GET  http://localhost:3000/positions/bitcoin/open
-Content-Type: application/json
+GET http://localhost:3000/market/snapshot/bitcoin
+
+###
+
+GET http://localhost:3000/market/history/bitcoin?limit=10

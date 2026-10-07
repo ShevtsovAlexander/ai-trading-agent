@@ -1,12 +1,14 @@
-# AI Trading Agent — Backend
+# AI Market Dashboard — Backend
 
 ## Что это
-NestJS backend для AI trading агента.
-Анализирует крипторынок через технические индикаторы и возвращает торговые решения с управлением позициями.
+NestJS backend информационного дашборда по крипторынку.
+Собирает цены, считает технические индикаторы, пишет снимки рынка и даёт к
+ним AI-комментарий; агрегирует новости и AI-дайджест ленты.
 
-## Цель проекта
-Построить систему: AI agent → backend → data sources → UI dashboard
-Долгосрочная цель: $100 → $10,000 через математическое преимущество и контроль риска.
+**Не торговый бот.** Решений BUY/SELL, позиций и кошелька нет — торговое ядро
+снято в TASK-0001 (история — тег `v1-trading-bot`). Рамка: «триггеры, не
+команды» — бэкенд описывает, что происходит, решение принимает человек.
+Границы — корневые `../docs/VISION.md` и `../docs/ROADMAP.md`.
 
 ## Стек
 - NestJS 11 (TypeScript)
@@ -17,139 +19,111 @@ NestJS backend для AI trading агента.
 - groq-sdk — AI через Groq (модель из GROQ_MODEL, дефолт openai/gpt-oss-120b)
 - Prisma 7 + @prisma/adapter-pg — ORM для PostgreSQL
 - CoinGecko API — реальные цены криптовалют (бесплатно, без ключа)
+- Binance API — исторические свечи для бэктеста
 
 ## Структура проекта
 src/
 ├── ai/
 │   ├── ai.module.ts
-│   └── ai.service.ts            — Groq клиент, метод analyze()
-├── analyze/
-│   ├── analyze.controller.ts    — POST /analyze, GET /analyze/decisions/:coinId
-│   ├── analyze.dto.ts           — { market, coinId, volume }
-│   ├── analyze.module.ts
-│   ├── analyze.service.ts       — weighted confluence логика + позиции + сохранение
-│   └── analyze.service.spec.ts  — 9 тестов
+│   └── ai.service.ts             — Groq клиент, one-shot complete()
+├── backtest/
+│   ├── backtest.controller.ts    — POST /backtest/run
+│   ├── backtest.dto.ts
+│   ├── backtest.module.ts
+│   ├── backtest.service.ts       — свечи Binance, симуляция стратегии на истории
+│   ├── backtest.types.ts
+│   └── backtest.indicators.spec.ts — индикаторы против technicalindicators
+├── digest/
+│   ├── digest.module.ts
+│   ├── digest.service.ts         — AI-дайджест ленты, кэш по хешу набора id
+│   └── digest.types.ts
+├── market/
+│   ├── market.controller.ts      — POST /market/refresh, GET /market/snapshot/:coinId, GET /market/history/:coinId
+│   ├── market.dto.ts             — { market, coinId }
+│   ├── market.module.ts
+│   ├── market.service.ts         — captureSnapshot (индикаторы → MarketSnapshot), getLatest, getHistory
+│   ├── market.comment.ts         — AI-комментарий к снимку, кэш по монете и хешу фактов
+│   └── market.comment.spec.ts    — 6 тестов кэша и fallback'ов
 ├── news/
-│   ├── news.controller.ts       — GET /news
+│   ├── news.controller.ts        — GET /news, GET /news/digest
 │   ├── news.module.ts
-│   ├── news.service.ts          — RSS-фиды (Cointelegraph, Coindesk, Decrypt), cron каждый час, дедуп, кэш
-│   └── news.types.ts            — NewsItem
-├── position/
-│   ├── position.controller.ts   — GET /positions, GET /positions/:coinId, GET /positions/:coinId/open
-│   ├── position.module.ts
-│   └── position.service.ts      — открытие/закрытие позиций, trailing stop
+│   ├── news.service.ts           — RSS-фиды (Cointelegraph, Coindesk, Decrypt), cron каждый час, дедуп, кэш
+│   ├── news.translator.ts        — LLM-перевод заголовков с валидацией формы
+│   └── news.types.ts             — NewsItem
 ├── price/
-│   ├── price.controller.ts      — GET /price/:coinId, GET /price/history/:coinId
+│   ├── price.controller.ts       — GET /price/:coinId, GET /price/history/:coinId
 │   ├── price.module.ts
-│   ├── price.scheduler.ts       — cron каждые 5 минут → анализ всех монет
-│   └── price.service.ts         — CoinGecko + EMA/RSI/MACD/BB/MA5/тренд
+│   ├── price.scheduler.ts        — cron каждые 5 минут → снимок рынка по BTC/ETH/SOL
+│   └── price.service.ts          — CoinGecko + EMA/RSI/MACD/BB/MA5/тренд
 ├── prisma/
-│   ├── prisma.module.ts         — @Global(), экспортирует PrismaService
-│   └── prisma.service.ts        — PrismaClient + @prisma/adapter-pg
-├── wallet/
-│   ├── wallet.controller.ts     — GET /wallet, POST /wallet/deposit, GET /wallet/stats, GET /wallet/history
-│   ├── wallet.module.ts
-│   └── wallet.service.ts        — виртуальный кошелёк, P&L, история баланса
-├── app.controller.ts            — GET /health
-├── app.module.ts                — корневой модуль
+│   ├── prisma.module.ts          — @Global(), экспортирует PrismaService
+│   └── prisma.service.ts         — PrismaClient + @prisma/adapter-pg
+├── app.controller.ts             — GET /health
+├── app.module.ts                 — корневой модуль
 ├── app.service.ts
-└── main.ts                      — ValidationPipe, CORS localhost:5173, порт 3000
+└── main.ts                       — ValidationPipe, CORS localhost:5173, порт 3000
 
 ## Все Endpoints
 - GET  /health
-- GET  /price/:coinId
+- GET  /price/:coinId                     — текущая цена (побочно пишет строку PriceSnapshot, см. ниже)
 - GET  /price/history/:coinId?limit=50
-- POST /analyze
-- GET  /analyze/decisions/:coinId?limit=50
-- GET  /positions
-- GET  /positions/:coinId
-- GET  /positions/:coinId/open
-- GET  /wallet
-- POST /wallet/deposit              — { amount: number }
-- GET  /wallet/stats?period=day|week|month|all
-- GET  /wallet/history?period=day|week|month|all
-- GET  /news                        — крипто-новости из RSS (Cointelegraph, Coindesk, Decrypt)
-- GET  /news/digest                  — AI-дайджест ленты (кэш по хешу id, генерится в refresh)
+- POST /market/refresh                    — снять снимок рынка сейчас; ответ — снимок + aiComment
+- GET  /market/snapshot/:coinId           — последний снимок + aiComment; нет снимков → 200 с пустым телом
+- GET  /market/history/:coinId?limit=50   — история снимков, БЕЗ aiComment
+- GET  /news                              — крипто-новости из RSS (Cointelegraph, Coindesk, Decrypt)
+- GET  /news/digest                       — AI-дайджест ленты (кэш по хешу id, генерится в refresh)
+- POST /backtest/run                      — прогон стратегии на исторических свечах
 
-## POST /analyze — формат запроса
+Ручные запросы — `test.http`.
+
+## POST /market/refresh — формат запроса
 {
+"market": "BTC/USDT",
+"coinId": "bitcoin"
+}
+
+## Снимок рынка — формат ответа (/market/refresh, /market/snapshot)
+Плоский, как строка `MarketSnapshot` в БД, плюс `aiComment`:
+{
+"id": number,
 "market": "BTC/USDT",
 "coinId": "bitcoin",
-"volume": 1500
-}
-
-## POST /analyze — формат ответа
-{
-"market": "BTC/USDT",
-"currentPrice": 76565,
-"previousPrice": 76568,
-"movingAverage": 76594.2,
-"ema9": 78440.42,
-"ema21": 76744.19,
-"rsi": 33.62,
-"macd": { "macd": -228.37, "signal": -316.5, "histogram": 88.13 },
-"bb": { "upper": 76661.86, "middle": 76588.8, "lower": 76515.74, "bandwidth": 0.19 },
+"currentPrice": number,
+"previousPrice": number | null,
+"movingAverage": number | null,
+"ema9": number | null,
+"ema21": number | null,
+"rsi": number | null,
+"macdValue": number | null,
+"macdSignal": number | null,
+"macdHistogram": number | null,
+"bbUpper": number | null,
+"bbMiddle": number | null,
+"bbLower": number | null,
+"bbBandwidth": number | null,   — в процентах
 "trend": "up" | "down" | "flat",
-"decision": "BUY" | "SELL" | "SKIP",
-"confidence": 60,
-"riskScore": 5,
-"expectedValue": 0.0001,
-"reason": "EMA9 > EMA21 (×2) | MACD бычий (×2) | ...",
-"aiReasoning": "текст от Groq на русском",
-"timestamp": "2026-05-24T..."
+"createdAt": "2026-10-07T...",
+"aiComment": string | null      — 2-3 предложения на русском
 }
 
-## Логика решений (analyze.service.ts)
+`/market/history` отдаёт массив таких же строк без `aiComment` — гонять
+модель на 50 строк незачем.
 
-### Шумовой фильтр (динамический порог по монете)
-- bitcoin:  |changePct| < 0.2% → SKIP
-- ethereum: |changePct| < 0.25% → SKIP
-- solana:   |changePct| < 0.4% → SKIP
-- остальные: |changePct| < 0.3% → SKIP
-
-### Weighted Confluence (6 индикаторов)
-| Индикатор | Вес | BUY сигнал | SELL сигнал |
-|-----------|-----|------------|-------------|
-| EMA кросс | 2.0 | EMA9 > EMA21 | EMA9 < EMA21 |
-| MACD | 2.0 | macd > signal && histogram > 0 | macd < signal && histogram < 0 |
-| RSI | 1.5 | RSI < 35 (перепродан) | RSI > 65 (перекуплен) |
-| Bollinger Bands | 1.5 | цена у нижней полосы | цена у верхней полосы |
-| Тренд | 1.0 | trend == up | trend == down |
-| MA5 | 1.0 | цена ниже MA5 > порога | цена выше MA5 > порога |
-
-Порог: сумма весов ≥ 4.0 → BUY/SELL, иначе SKIP
-
-### Контрарная коррекция
-Если сигнал против тренда:
-- confidence -= 15
-- riskScore += 2
-- Компенсация если RSI подтверждает разворот (+10)
-- Компенсация если MACD histogram подтверждает (+8)
-
-### Confidence формула
-
-## Управление позициями (position.service.ts)
-
-### Открытие позиции
-- Открывается при BUY/SELL сигнале если нет открытой позиции по монете
-- Stop loss = 2% от цены входа
-- Одна позиция на монету одновременно
-
-### Trailing Stop
-- При новом максимуме (BUY) → стоп поднимается до currentPrice * 0.98
-- При новом минимуме (SELL) → стоп опускается до currentPrice * 1.02
-- Фиксирует часть прибыли при каждом новом хае/лоу
-
-### Закрытие и Re-entry
-- Стоп сработал → позиция закрывается → P&L записывается в WalletTransaction
-- Следующий BUY/SELL сигнал → открывается новая позиция
+## AI-комментарий (market.comment.ts)
+- Описывает обстановку по показаниям индикаторов. Промпт запрещает
+  рекомендации и действия («купить», «продать», «вход», «стоп», «стоит»).
+- Генерится «на лету» в контроллере, в БД не хранится.
+- Кэш — in-memory `Map` по `coinId`, ключ — хеш тех же фактов, что уходят в
+  промпт (включая `currentPrice`). Цена меняется в каждом снимке, поэтому
+  при опросе фронта кэш почти не срабатывает: ~1 вызов Groq на снимок.
+  Принято осознанно — `../docs/DECISIONS.md`, запись 2026-10-07.
+- Отказ модели не роняет маршрут: весь `describe()` под try, fallback на
+  прошлый комментарий монеты, иначе `null`.
 
 ## Модели БД
 - PriceSnapshot — история цен (coinId, price, createdAt)
-- TradeDecision — история решений (market, coinId, decision, confidence, ema9, ema21, rsi, ...)
-- Wallet — виртуальный кошелёк (balance, initialBalance)
-- WalletTransaction — история транзакций (amount, type: DEPOSIT|PROFIT|LOSS)
-- Position — позиции (coinId, decision, entryPrice, stopLoss, highPrice, status, pnl, ...)
+- MarketSnapshot — снимок рынка: цена, previousPrice, MA5, EMA9/21, RSI,
+  MACD (value/signal/histogram), BB (upper/middle/lower/bandwidth), тренд
 
 ## Индикаторы (price.service.ts)
 - getEMA(coinId, period) — экспоненциальное скользящее среднее
@@ -161,6 +135,15 @@ src/
 - getPreviousPrice(coinId) — предыдущая цена из БД
 - getHistory(coinId, limit) — история цен
 
+**Известный дефект — TASK-0002 (`../docs/aidd/prd/TASK-0002.prd.md`):**
+`getEMA`, `getRSI`, `getMACD` берут `orderBy: 'asc'` с фиксированным `take` —
+то есть самые старые строки истории, а не свежие. EMA9/EMA21/RSI/MACD
+не меняются с мая, и AI-комментарий пересказывает эти мёртвые числа.
+BB, MA5 и тренд берут `desc` и считаются верно.
+
+**Долг:** `getPrice` пишет строку в `PriceSnapshot` на каждый вызов —
+запись внутри геттера. Отдельный тикет.
+
 ## Переменные окружения (.env)
 GROQ_API_KEY=...
 GROQ_MODEL=openai/gpt-oss-120b   # id модели Groq; дефолт в коде — openai/gpt-oss-120b
@@ -169,16 +152,26 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trading_agent
 
 ## Инфраструктура
 - Docker — postgres:16 контейнер
-- npm run db:start  →  docker compose up -d
-- npm run db:stop   →  docker compose down
+- npm run db:start   →  docker compose up -d
+- npm run db:stop    →  docker compose down
+- npm run db:migrate →  prisma migrate dev
 
 ## Запуск
 npm run db:start
 npm run start:dev
 
+`npm run start:prod` нерабочий: зовёт `node dist/main`, а сборка кладёт точку
+входа в `dist/src/main.js`. Прод-запуск вручную — `node dist/src/main`.
+
 ## Тесты
 npm run test
-9 тестов — все сценарии AnalyzeService включая weighted confluence
+12 тестов, только с внешним оракулом:
+- `market.comment.spec.ts` — 6: кэш комментария и fallback'и при отказе модели
+- `backtest.indicators.spec.ts` — 6: EMA(9/21/26), RSI(14), MACD, BB(20) против
+  библиотеки technicalindicators. Тест RSI зелёный при расхождении —
+  false-green, отдельный тикет.
+
+`npm run test:e2e` сломан до миграции (ждёт `GET /` → «Hello World!»).
 
 ## AIDD Workflow
 
@@ -192,29 +185,4 @@ npm run test
 (`BACKTEST.md` + `plan/` + `tasklist/`) остался от того процесса: бэктест-модуль
 реализован, артефакты держим как летопись, новые сюда не пишем.
 
-Перед работой в бэкенде читай корневые `../docs/VISION.md` и `../docs/ROADMAP.md`:
-торговое ядро (Wallet / Position / BUY-SELL решения) помечено к удалению —
-проект переориентирован на информационный дашборд.
-
-## Что сделано
-- [x] NestJS проект с модульной структурой
-- [x] CoinGecko интеграция — реальные цены
-- [x] PostgreSQL + Prisma 7 — хранение всей истории
-- [x] Cron — автоанализ каждые 5 минут (BTC/ETH/SOL)
-- [x] 6 технических индикаторов (EMA, RSI, MACD, BB, MA5, тренд)
-- [x] Weighted confluence — порог 4.0 из максимум 9.0
-- [x] Динамический порог шума по монете
-- [x] Контрарная коррекция confidence/riskScore
-- [x] Trailing stop loss с re-entry
-- [x] Виртуальный кошелёк — баланс, P&L, история
-- [x] AI reasoning через Groq (openai/gpt-oss-120b)
-- [x] Logger — NestJS Logger везде
-- [x] CORS — localhost:5173
-- [x] 9 тестов для AnalyzeService
-
-## Что впереди
-- [ ] Telegram уведомления при сигналах
-- [ ] Деплой на VPS (Hetzner/DigitalOcean)
-- [ ] Реальный биржевой API (Bybit/MEXC)
-- [ ] Claude Code интеграция
-- [ ] Polymarket API — prediction markets как второй источник сигналов
+Перед работой в бэкенде читай корневые `../docs/VISION.md` и `../docs/ROADMAP.md`.

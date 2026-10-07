@@ -31,8 +31,8 @@ export class AiService {
       effort === 'off' ? undefined : (effort as ReasoningEffort);
   }
 
-  // Универсальный one-shot вызов модели — для задач вне торгового анализа
-  // (перевод новостей и т.п.). Возвращает пустую строку, если модель молчит.
+  // Универсальный one-shot вызов модели — перевод новостей, дайджест,
+  // комментарий к снимку рынка. Возвращает пустую строку, если модель молчит.
   async complete(
     prompt: string,
     opts: { system?: string; maxTokens?: number; temperature?: number } = {},
