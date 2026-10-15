@@ -1,13 +1,12 @@
 /**
- * Сравнение calcEMA / calcRSI / calcMACD / calcBB из BacktestService
+ * Сравнение calcEMA / calcRSI / calcMACD / calcBB из indicators.ts
  * с библиотекой technicalindicators на одних и тех же ценах.
  *
- * Запуск: npm run test -- backtest.indicators
+ * Запуск: npm run test -- indicators
  */
 
 import * as ti from 'technicalindicators';
-import { HttpService } from '@nestjs/axios';
-import { BacktestService } from './backtest.service';
+import { calcBB, calcEMA, calcMACD, calcRSI } from './indicators';
 
 // ---------------------------------------------------------------------------
 // Детерминированные тестовые цены (50 значений) — синусоида + линейный тренд
@@ -25,19 +24,13 @@ function near(a: number, b: number, tol = TOLERANCE): boolean {
   return Math.abs(a - b) / (Math.abs(b) || 1) <= tol;
 }
 
-// Достаём приватные методы через any
-function getSvc(): BacktestService {
-  return new BacktestService({} as HttpService);
-}
-
 // ---------------------------------------------------------------------------
 // EMA
 // ---------------------------------------------------------------------------
 describe('calcEMA vs technicalindicators.EMA', () => {
   [9, 21, 26].forEach((period) => {
     it(`EMA(${period}) — последние 10 значений совпадают с точностью ${TOLERANCE}`, () => {
-      const svc = getSvc();
-      const mine: number[] = (svc as any).calcEMA(PRICES, period);
+      const mine: number[] = calcEMA(PRICES, period);
 
       // TI возвращает компактный массив без NaN-префикса
       // mine[period-1] соответствует ti[0], mine[i] → ti[i - (period-1)]
@@ -75,8 +68,7 @@ describe('calcEMA vs technicalindicators.EMA', () => {
 // ---------------------------------------------------------------------------
 describe('calcRSI vs technicalindicators.RSI', () => {
   it('RSI(14) — все значения совпадают с точностью 0.01%', () => {
-    const svc = getSvc();
-    const mine: number[] = (svc as any).calcRSI(PRICES, 14);
+    const mine: number[] = calcRSI(PRICES, 14);
 
     // TI RSI: первое значение соответствует mine[14]
     const tiResult: number[] = ti.RSI.calculate({ period: 14, values: PRICES });
@@ -116,8 +108,7 @@ describe('calcRSI vs technicalindicators.RSI', () => {
 // ---------------------------------------------------------------------------
 describe('calcMACD vs technicalindicators.MACD', () => {
   it('MACD line совпадает начиная с индекса 25', () => {
-    const svc = getSvc();
-    const mine = (svc as any).calcMACD(PRICES);
+    const mine = calcMACD(PRICES);
 
     const tiResult = ti.MACD.calculate({
       values: PRICES,
@@ -197,8 +188,7 @@ describe('calcMACD vs technicalindicators.MACD', () => {
 // ---------------------------------------------------------------------------
 describe('calcBB vs technicalindicators.BollingerBands', () => {
   it('BB(20) upper/middle/lower совпадают с точностью 0.01%', () => {
-    const svc = getSvc();
-    const mine = (svc as any).calcBB(PRICES, 20);
+    const mine = calcBB(PRICES, 20);
 
     // TI BB: первый результат = индекс 19 у mine (period-1)
     const tiResult = ti.BollingerBands.calculate({
