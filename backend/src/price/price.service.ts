@@ -2,6 +2,18 @@ import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '../prisma/prisma.service';
+import { calcEMA, calcMACD, calcRSI } from '../indicators/indicators';
+
+// Окно для EMA/RSI/MACD: ~8 ч при шаге крона 5 мин. EMA и RSI Уайлдера
+// зависят от длины окна; вся история (до 25 920 строк на 3 мес) ради сотых
+// долей на каждом снимке не окупается — docs/aidd/plan/TASK-0002.md.
+const INDICATOR_WINDOW = 100;
+
+// Последний элемент ряда из indicators.ts; NaN там — «данных не хватило»
+const lastValid = (values: number[]): number | null => {
+  const value = values[values.length - 1];
+  return value === undefined || Number.isNaN(value) ? null : value;
+};
 
 @Injectable()
 export class PriceService {
@@ -97,101 +109,49 @@ export class PriceService {
     });
   }
 
-  // EMA — экспоненциальное скользящее среднее
-  async getEMA(coinId: string, period: number): Promise<number | null> {
+  // Свежие INDICATOR_WINDOW цен в хронологическом порядке — вход для формул
+  // из indicators.ts. Берём desc + reverse, как getTrend: asc с take отдавал
+  // самые старые строки истории, и EMA/RSI/MACD не менялись с мая (TASK-0002).
+  private async recentPrices(coinId: string): Promise<number[]> {
     const snapshots = await this.prisma.priceSnapshot.findMany({
       where: { coinId },
-      orderBy: { createdAt: 'asc' },
-      take: period * 3, // берём больше данных для точности
+      orderBy: { createdAt: 'desc' },
+      take: INDICATOR_WINDOW,
     });
 
-    if (snapshots.length < period) return null;
-
-    const prices = snapshots.map((s) => s.price);
-    const k = 2 / (period + 1);
-
-    let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
-    for (let i = period; i < prices.length; i++) {
-      ema = prices[i] * k + ema * (1 - k);
-    }
-
-    return parseFloat(ema.toFixed(2));
+    return snapshots.reverse().map((s) => s.price);
   }
 
-  // RSI — индекс относительной силы
+  // EMA — экспоненциальное скользящее среднее
+  async getEMA(coinId: string, period: number): Promise<number | null> {
+    const ema = lastValid(calcEMA(await this.recentPrices(coinId), period));
+    return ema === null ? null : parseFloat(ema.toFixed(2));
+  }
+
+  // RSI — индекс относительной силы, сглаживание Уайлдера
   async getRSI(coinId: string, period = 14): Promise<number | null> {
-    const snapshots = await this.prisma.priceSnapshot.findMany({
-      where: { coinId },
-      orderBy: { createdAt: 'asc' },
-      take: period + 10,
-    });
-
-    if (snapshots.length < period + 1) return null;
-
-    const prices = snapshots.map((s) => s.price);
-    const changes = prices.slice(1).map((p, i) => p - prices[i]);
-
-    const gains = changes.map((c) => (c > 0 ? c : 0));
-    const losses = changes.map((c) => (c < 0 ? Math.abs(c) : 0));
-
-    const avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
-    const avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
-
-    if (avgLoss === 0) return 100;
-
-    const rs = avgGain / avgLoss;
-    return parseFloat((100 - 100 / (1 + rs)).toFixed(2));
+    const rsi = lastValid(calcRSI(await this.recentPrices(coinId), period));
+    return rsi === null ? null : parseFloat(rsi.toFixed(2));
   }
 
   async getMACD(
     coinId: string,
   ): Promise<{ macd: number; signal: number; histogram: number } | null> {
-    // Берём достаточно данных для расчёта EMA26 + запас для сигнальной линии
-    const snapshots = await this.prisma.priceSnapshot.findMany({
-      where: { coinId },
-      orderBy: { createdAt: 'asc' },
-      take: 26 * 3,
-    });
+    const { macd, signal, histogram } = calcMACD(
+      await this.recentPrices(coinId),
+    );
 
-    if (snapshots.length < 26) return null;
-
-    const prices = snapshots.map((s) => s.price);
-
-    // Вспомогательная функция — считает EMA для любого массива и периода
-    const calcEMA = (data: number[], period: number): number[] => {
-      const k = 2 / (period + 1); // вес последней точки — чем меньше период, тем больше вес
-      const emas: number[] = [];
-      let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period; // первое значение — простое среднее
-      emas.push(ema);
-      for (let i = period; i < data.length; i++) {
-        ema = data[i] * k + ema * (1 - k); // каждое следующее = текущая цена * вес + прошлое EMA * (1 - вес)
-        emas.push(ema);
-      }
-      return emas;
-    };
-
-    const ema12 = calcEMA(prices, 12); // быстрая линия — реагирует на свежие движения
-    const ema26 = calcEMA(prices, 26); // медленная линия — показывает общий тренд
-
-    // EMA26 короче EMA12 на 14 элементов — выравниваем чтобы вычесть поточечно
-    const offset = ema12.length - ema26.length;
-    const macdLine = ema26.map((v, i) => ema12[i + offset] - v);
-    // macdLine > 0 → быстрая выше медленной → бычий импульс
-    // macdLine < 0 → быстрая ниже медленной → медвежий импульс
-
-    if (macdLine.length < 9) return null;
-
-    const signalLine = calcEMA(macdLine, 9); // сигнальная линия — EMA9 от самого MACD
-    const lastMacd = macdLine[macdLine.length - 1];
-    const lastSignal = signalLine[signalLine.length - 1];
+    // signal валиден позже линии MACD (с индекса 33) — по нему и проверяем
+    const lastSignal = lastValid(signal);
+    if (lastSignal === null) return null;
 
     return {
-      macd: parseFloat(lastMacd.toFixed(2)),
+      macd: parseFloat(macd[macd.length - 1].toFixed(2)),
       signal: parseFloat(lastSignal.toFixed(2)),
       // histogram показывает силу импульса:
       // > 0 и растёт → импульс усиливается
       // > 0 и падает → импульс слабеет (возможный разворот)
-      histogram: parseFloat((lastMacd - lastSignal).toFixed(2)),
+      histogram: parseFloat(histogram[histogram.length - 1].toFixed(2)),
     };
   }
 
