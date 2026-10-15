@@ -1,8 +1,7 @@
 // Формулы индикаторов — чистые функции. Вынесены из BacktestService, чтобы
 // живой контур (PriceService) считал по тем же формулам, а не по своей копии,
-// которая разошлась с этой. indicators.spec.ts сверяет их с technicalindicators;
-// RSI пока не сверяется по-настоящему (простое среднее против Уайлдера у
-// эталона), и PriceService ещё на своих формулах — оба пункта в TASK-0002.
+// которая разошлась с этой. indicators.spec.ts сверяет их с technicalindicators.
+// PriceService пока ещё на своих формулах — переводится в TASK-0002.3.
 
 // Возвращает массив длиной prices.length.
 // Индексы 0..period-2 — NaN (недостаточно данных).
@@ -26,21 +25,34 @@ export function calcEMA(prices: number[], period: number): number[] {
 
 // Возвращает массив длиной prices.length.
 // Валидные значения начиная с индекса period (нужно period+1 цен для period дельт).
-// Алгоритм идентичен getRSI в price.service.ts — простое среднее gains/losses.
+// Сглаживание Уайлдера, как в technicalindicators: на индексе period средние —
+// простое среднее первых period gains/losses, дальше
+// avg = (avg * (period-1) + текущее) / period.
 export function calcRSI(prices: number[], period = 14): number[] {
   const result = new Array<number>(prices.length).fill(NaN);
+  if (prices.length < period + 1) return result;
 
-  for (let i = period; i < prices.length; i++) {
-    const slice = prices.slice(i - period, i + 1); // period+1 цен = period дельт
-    const changes = slice.slice(1).map((p, j) => p - slice[j]);
+  let avgGain = 0;
+  let avgLoss = 0;
 
-    const avgGain =
-      changes.reduce((sum, c) => sum + (c > 0 ? c : 0), 0) / period;
-    const avgLoss =
-      changes.reduce((sum, c) => sum + (c < 0 ? Math.abs(c) : 0), 0) /
-      period;
+  for (let i = 1; i < prices.length; i++) {
+    const change = prices[i] - prices[i - 1];
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? -change : 0;
 
-    result[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    if (i <= period) {
+      // накапливаем первые period дельт для затравки
+      avgGain += gain / period;
+      avgLoss += loss / period;
+      if (i < period) continue;
+    } else {
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+    }
+
+    if (avgLoss === 0) result[i] = 100;
+    else if (avgGain === 0) result[i] = 0;
+    else result[i] = 100 - 100 / (1 + avgGain / avgLoss);
   }
 
   return result;

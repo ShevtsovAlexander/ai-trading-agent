@@ -67,7 +67,12 @@ describe('calcEMA vs technicalindicators.EMA', () => {
 // RSI
 // ---------------------------------------------------------------------------
 describe('calcRSI vs technicalindicators.RSI', () => {
-  it('RSI(14) — все значения совпадают с точностью 0.01%', () => {
+  // Эталон округляет RSI до 2 знаков (toFixed(2) в technicalindicators),
+  // поэтому допуск абсолютный: относительный 0.01% при RSI около 50 съедается
+  // самим округлением.
+  const RSI_TOLERANCE = 0.005 + 1e-9;
+
+  it('RSI(14) — все значения совпадают с точностью 0.005 (эталон округляет до 2 знаков)', () => {
     const mine: number[] = calcRSI(PRICES, 14);
 
     // TI RSI: первое значение соответствует mine[14]
@@ -81,7 +86,7 @@ describe('calcRSI vs technicalindicators.RSI', () => {
       const myVal = mine[my_i];
       const tiVal = tiResult[ti_i];
 
-      if (!near(myVal, tiVal)) {
+      if (!isFinite(myVal) || Math.abs(myVal - tiVal) > RSI_TOLERANCE) {
         discrepancies.push(
           `idx=${my_i}: mine=${myVal?.toFixed(4)} ti=${tiVal?.toFixed(4)} diff=${Math.abs(myVal - tiVal).toFixed(4)}`,
         );
@@ -91,15 +96,32 @@ describe('calcRSI vs technicalindicators.RSI', () => {
     if (discrepancies.length > 0) {
       console.log(`\n=== RSI(14) расхождения (${discrepancies.length}/${tiResult.length}): ===`);
       discrepancies.forEach((d) => console.log(' ', d));
-      console.log('\nNOTE: technicalindicators использует Wilder Smoothing (EMA-style),');
-      console.log('      calcRSI использует простое среднее — алгоритмы различаются.');
     } else {
       console.log(`RSI(14): все ${tiResult.length} значений совпадают ✓`);
     }
 
-    // Не падаем автоматически — показываем расхождения для анализа
-    // expect(discrepancies.length).toBe(0);
-    expect(discrepancies.length).toBeGreaterThanOrEqual(0); // всегда проходит
+    expect(discrepancies.length).toBe(0);
+    // Пустой эталон прошёл бы цикл выше без единой проверки
+    expect(tiResult.length).toBe(PRICES.length - offset);
+    // RSI валиден с индекса period — до него значений быть не должно
+    expect(mine.slice(0, offset).every(Number.isNaN)).toBe(true);
+  });
+
+  // В PRICES нет 14 дельт одного знака подряд, поэтому ветки avgLoss = 0 /
+  // avgGain = 0 основной тест не проходит. Ровный ряд — оба нуля сразу:
+  // эталон сначала проверяет avgLoss и отдаёт 100.
+  [
+    { name: 'ровный ряд', values: Array.from({ length: 20 }, () => 100) },
+    { name: 'монотонный рост', values: Array.from({ length: 20 }, (_, i) => 100 + i) },
+    { name: 'монотонное падение', values: Array.from({ length: 20 }, (_, i) => 100 - i) },
+  ].forEach(({ name, values }) => {
+    it(`RSI(14) — ${name} совпадает с эталоном`, () => {
+      const mine = calcRSI(values, 14).slice(14);
+      const tiResult = ti.RSI.calculate({ period: 14, values });
+
+      expect(tiResult.length).toBe(values.length - 14);
+      expect(mine).toEqual(tiResult);
+    });
   });
 });
 
