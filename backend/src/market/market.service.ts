@@ -15,27 +15,22 @@ export class MarketService {
   async captureSnapshot(dto: MarketDto) {
     this.logger.log(`Снимок рынка ${dto.coinId} (${dto.market})`);
 
-    const [
-      currentPrice,
-      previousPrice,
-      trend,
-      movingAverage,
-      ema9,
-      ema21,
-      rsi,
-      macd,
-      bb,
-    ] = await Promise.all([
-      this.priceService.getPrice(dto.coinId),
-      this.priceService.getPreviousPrice(dto.coinId),
-      this.priceService.getTrend(dto.coinId),
-      this.priceService.getMovingAverage(dto.coinId),
-      this.priceService.getEMA(dto.coinId, 9),
-      this.priceService.getEMA(dto.coinId, 21),
-      this.priceService.getRSI(dto.coinId),
-      this.priceService.getMACD(dto.coinId),
-      this.priceService.getBollingerBands(dto.coinId),
-    ]);
+    // Цена пишется в PriceSnapshot ДО чтения индикаторов: в одном Promise.all
+    // с ними окна EMA/RSI/MACD/BB то включали свежую строку, то нет, а
+    // getPreviousPrice (skip: 1) мог пропустить не ту строку (TASK-0002.4).
+    const currentPrice = await this.priceService.getPrice(dto.coinId);
+
+    const [previousPrice, trend, movingAverage, ema9, ema21, rsi, macd, bb] =
+      await Promise.all([
+        this.priceService.getPreviousPrice(dto.coinId),
+        this.priceService.getTrend(dto.coinId),
+        this.priceService.getMovingAverage(dto.coinId),
+        this.priceService.getEMA(dto.coinId, 9),
+        this.priceService.getEMA(dto.coinId, 21),
+        this.priceService.getRSI(dto.coinId),
+        this.priceService.getMACD(dto.coinId),
+        this.priceService.getBollingerBands(dto.coinId),
+      ]);
 
     // Возвращаем записанную строку, а не рукотворный объект: до T5 этот
     // метод отдавал вложенные macd/bb и timestamp, а getLatest — плоскую
