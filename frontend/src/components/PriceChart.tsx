@@ -220,12 +220,30 @@ export const PriceChart = ({
     ema21: h.snapshot?.ema21 ?? null,
     bbUpper: h.snapshot?.bbUpper ?? null,
     bbLower: h.snapshot?.bbLower ?? null,
-    bbRange: h.snapshot ? [h.snapshot.bbLower, h.snapshot.bbUpper] : null,
+    // Полоса BB для Area: [низ, верх]. Без одной из границ — null, а не
+    // [null, null]: снимок без BB (истории < 20 точек) полосы не рисует
+    bbRange:
+      h.snapshot?.bbLower != null && h.snapshot?.bbUpper != null
+        ? [h.snapshot.bbLower, h.snapshot.bbUpper]
+        : null,
   }));
 
-  const prices = history.map((h) => h.price);
-  const min = Math.min(...prices) * 0.999;
-  const max = Math.max(...prices) * 1.001;
+  // Домен Y — по цене и границам BB с отступом 0.1%. Обрезать серии recharts
+  // и так не даст: при allowDataOverflow=false он расширяет заданный домен до
+  // данных. Здесь — отступ от краёв и пустая история без Infinity. Цикл, а не
+  // Math.min(...arr): на 3мес до ~78 тыс. значений — больше лимита
+  // аргументов в Safari.
+  let min = Infinity;
+  let max = -Infinity;
+  for (const d of data) {
+    for (const v of [d.price, d.bbLower, d.bbUpper]) {
+      if (v == null) continue;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  const domain: [number | string, number | string] =
+    min <= max ? [min * 0.999, max * 1.001] : ["auto", "auto"];
 
   return (
     <Container>
@@ -274,7 +292,7 @@ export const PriceChart = ({
             interval="preserveStartEnd"
           />
           <YAxis
-            domain={[min, max]}
+            domain={domain}
             tick={{ fill: "#555", fontSize: 10 }}
             axisLine={false}
             tickLine={false}
@@ -282,20 +300,11 @@ export const PriceChart = ({
             width={75}
           />
           <Tooltip content={<CustomTooltip />} />
+          {/* Полоса BB: Area по [bbLower, bbUpper] заливает между границами
+              и обводит обе (range area recharts) */}
           <Area
             type="monotone"
-            dataKey="bbUpper"
-            stroke="#334155"
-            strokeWidth={1}
-            fill="none"
-            strokeDasharray="3 3"
-            dot={false}
-            activeDot={false}
-            isAnimationActive={false}
-          />
-          <Area
-            type="monotone"
-            dataKey="bbLower"
+            dataKey="bbRange"
             stroke="#334155"
             strokeWidth={1}
             fill="#1e293b"
