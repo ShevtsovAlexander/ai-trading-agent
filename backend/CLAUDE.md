@@ -18,8 +18,9 @@ NestJS backend информационного дашборда по крипто
 - class-validator — валидация входящих данных
 - groq-sdk — AI через Groq (модель из GROQ_MODEL, дефолт openai/gpt-oss-120b)
 - Prisma 7 + @prisma/adapter-pg — ORM для PostgreSQL
-- CoinGecko API — реальные цены криптовалют (бесплатно, без ключа)
-- Binance API — исторические свечи для бэктеста
+- Binance API — цена (последняя закрытая 5м свеча) и исторические свечи для бэктеста
+- CoinGecko API — fallback цены для монет без Binance-символа (бесплатно, без ключа)
+- technicalindicators — только в тестах, эталон формул индикаторов
 
 ## Структура проекта
 src/
@@ -31,12 +32,14 @@ src/
 │   ├── backtest.dto.ts
 │   ├── backtest.module.ts
 │   ├── backtest.service.ts       — свечи Binance, симуляция стратегии на истории
-│   ├── backtest.types.ts
-│   └── backtest.indicators.spec.ts — индикаторы против technicalindicators
+│   └── backtest.types.ts
 ├── digest/
 │   ├── digest.module.ts
 │   ├── digest.service.ts         — AI-дайджест ленты, кэш по хешу набора id
 │   └── digest.types.ts
+├── indicators/
+│   ├── indicators.ts             — calcEMA/calcRSI/calcMACD/calcBB: чистые функции, общие для живого контура и бэктеста
+│   └── indicators.spec.ts        — 9 тестов: формулы против technicalindicators
 ├── market/
 │   ├── market.controller.ts      — POST /market/refresh, GET /market/snapshot/:coinId, GET /market/history/:coinId
 │   ├── market.dto.ts             — { market, coinId }
@@ -54,7 +57,8 @@ src/
 │   ├── price.controller.ts       — GET /price/:coinId, GET /price/history/:coinId
 │   ├── price.module.ts
 │   ├── price.scheduler.ts        — cron каждые 5 минут → снимок рынка по BTC/ETH/SOL
-│   └── price.service.ts          — CoinGecko + EMA/RSI/MACD/BB/MA5/тренд
+│   ├── price.service.ts          — цена (Binance, fallback CoinGecko) + EMA/RSI/MACD/BB/MA5/тренд
+│   └── price.service.spec.ts     — 7 тестов: выборка окна против technicalindicators
 ├── prisma/
 │   ├── prisma.module.ts          — @Global(), экспортирует PrismaService
 │   └── prisma.service.ts         — PrismaClient + @prisma/adapter-pg
@@ -126,20 +130,30 @@ src/
   MACD (value/signal/histogram), BB (upper/middle/lower/bandwidth), тренд
 
 ## Индикаторы (price.service.ts)
+Формулы EMA/RSI/MACD — в `indicators/indicators.ts`, одни на живой контур
+и бэктест. BB в живом контуре — своя копия в `getBollingerBands` (формула
+совпадает с `calcBB`, тестами сервиса не покрыта; дубль — «Замечено рядом»
+TASK-0002). `getEMA`/`getRSI`/`getMACD` берут последние `INDICATOR_WINDOW`
+(100) строк `PriceSnapshot` (`desc` + `take` + `reverse` → хронология),
+считают общей функцией и отдают последний элемент; нехватка данных → `null`.
+Окно — и потолок периода: `getEMA` с `period > 100` всегда `null`.
+
 - getEMA(coinId, period) — экспоненциальное скользящее среднее
-- getRSI(coinId, period=14) — индекс относительной силы
-- getMACD(coinId) — MACD линия, сигнальная линия, histogram
+- getRSI(coinId, period=14) — индекс относительной силы, сглаживание Уайлдера
+- getMACD(coinId) — MACD(12,26,9): линия, сигнальная линия, histogram
 - getBollingerBands(coinId, period=20) — upper/middle/lower/bandwidth
 - getMovingAverage(coinId, points=5) — простое скользящее среднее MA5
 - getTrend(coinId, points=10) — up/down/flat по соотношению ups/downs
 - getPreviousPrice(coinId) — предыдущая цена из БД
 - getHistory(coinId, limit) — история цен
 
-**Известный дефект — TASK-0002 (`../docs/aidd/prd/TASK-0002.prd.md`):**
-`getEMA`, `getRSI`, `getMACD` берут `orderBy: 'asc'` с фиксированным `take` —
-то есть самые старые строки истории, а не свежие. EMA9/EMA21/RSI/MACD
-не меняются с мая, и AI-комментарий пересказывает эти мёртвые числа.
-BB, MA5 и тренд берут `desc` и считаются верно.
+`captureSnapshot` (market.service.ts) пишет цену (`getPrice`) **до** чтения
+индикаторов, остальные `get*` — параллельно: свежая строка входит в окно.
+
+**Известное — TASK-0004 (`../docs/aidd/prd/TASK-0004.prd.md`):** окно — по
+числу строк, не по времени. После остановки бэкенда оно склеивает паузу:
+скачок цены через неё искажает RSI и раздувает BB (до ~100 мин для BB,
+часы для EMA/RSI/MACD). Истории до первого запуска и за простой в БД нет.
 
 **Долг:** `getPrice` пишет строку в `PriceSnapshot` на каждый вызов —
 запись внутри геттера. Отдельный тикет.
@@ -165,11 +179,15 @@ npm run start:dev
 
 ## Тесты
 npm run test
-12 тестов, только с внешним оракулом:
-- `market.comment.spec.ts` — 6: кэш комментария и fallback'и при отказе модели
-- `backtest.indicators.spec.ts` — 6: EMA(9/21/26), RSI(14), MACD, BB(20) против
-  библиотеки technicalindicators. Тест RSI зелёный при расхождении —
-  false-green, отдельный тикет.
+22 теста, только с внешним оракулом:
+- `indicators/indicators.spec.ts` — 9: EMA(9/21/26), RSI(14) на ряде и трёх
+  краевых (ровный, рост, падение), MACD, BB(20) против technicalindicators.
+  RSI сверяется с допуском 0.005 — тест падал на старом простом среднем
+  (TASK-0002.2), не false-green.
+- `price/price.service.spec.ts` — 7: EMA/RSI/MACD сервиса на последних 100
+  ценах против technicalindicators; фейковая Prisma честно применяет
+  `orderBy`/`take`; кейсы нехватки данных → `null`.
+- `market/market.comment.spec.ts` — 6: кэш комментария и fallback'и при отказе модели
 
 `npm run test:e2e` сломан до миграции (ждёт `GET /` → «Hello World!»).
 
