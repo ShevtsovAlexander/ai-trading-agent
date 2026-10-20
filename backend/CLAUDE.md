@@ -2,8 +2,10 @@
 
 ## Что это
 NestJS backend информационного дашборда по крипторынку.
-Собирает цены, считает технические индикаторы, пишет снимки рынка и даёт к
-ним AI-комментарий; агрегирует новости и AI-дайджест ленты.
+Берёт закрытые свечи Binance по запросу, считает по ним технические
+индикаторы и даёт к последней свече AI-комментарий; агрегирует новости и
+AI-дайджест ленты. Своей истории цен не копит — история у Binance
+(TASK-0004, `../docs/DECISIONS.md` 2026-10-20).
 
 **Не торговый бот.** Решений BUY/SELL, позиций и кошелька нет — торговое ядро
 снято в TASK-0001 (история — тег `v1-trading-bot`). Рамка: «триггеры, не
@@ -14,12 +16,12 @@ NestJS backend информационного дашборда по крипто
 - NestJS 11 (TypeScript)
 - @nestjs/axios — HTTP запросы к внешним API
 - @nestjs/config — переменные окружения
-- @nestjs/schedule — cron задачи
+- @nestjs/schedule — cron новостей (раз в час); цены по крону больше не собираются
 - class-validator — валидация входящих данных
 - groq-sdk — AI через Groq (модель из GROQ_MODEL, дефолт openai/gpt-oss-120b)
 - Prisma 7 + @prisma/adapter-pg — ORM для PostgreSQL
-- Binance API — цена (последняя закрытая 5м свеча) и исторические свечи для бэктеста
-- CoinGecko API — fallback цены для монет без Binance-символа (бесплатно, без ключа)
+- Binance API — закрытые свечи (`klines`) для дашборда и бэктеста; монеты —
+  только пары Binance (BTC/ETH/SOL), CoinGecko-fallback снят в TASK-0004
 - technicalindicators — только в тестах, эталон формул индикаторов
 
 ## Структура проекта
@@ -31,34 +33,32 @@ src/
 │   ├── backtest.controller.ts    — POST /backtest/run
 │   ├── backtest.dto.ts
 │   ├── backtest.module.ts
-│   ├── backtest.service.ts       — свечи Binance, симуляция стратегии на истории
+│   ├── backtest.service.ts       — свечи Binance (свой fetchCandles), симуляция стратегии на истории
 │   └── backtest.types.ts
+├── binance/
+│   ├── klines.ts                 — fetchClosedCandles: закрытые свечи постранично по 1000, незакрытая отброшена
+│   └── klines.spec.ts            — 3 теста на честном фейке HTTP
 ├── digest/
 │   ├── digest.module.ts
 │   ├── digest.service.ts         — AI-дайджест ленты, кэш по хешу набора id
 │   └── digest.types.ts
 ├── indicators/
-│   ├── indicators.ts             — calcEMA/calcRSI/calcMACD/calcBB: чистые функции, общие для живого контура и бэктеста
-│   └── indicators.spec.ts        — 9 тестов: формулы против technicalindicators
+│   ├── indicators.ts             — calcEMA/RSI/MACD/BB/SMA/Trend: чистые функции, общие для дашборда и бэктеста
+│   └── indicators.spec.ts        — 11 тестов: формулы против technicalindicators
 ├── market/
-│   ├── market.controller.ts      — POST /market/refresh, GET /market/snapshot/:coinId, GET /market/history/:coinId
-│   ├── market.dto.ts             — { market, coinId }
+│   ├── market.controller.ts      — GET /market/candles/:coinId, GET /market/view/:coinId
 │   ├── market.module.ts
-│   ├── market.service.ts         — captureSnapshot (индикаторы → MarketSnapshot), getLatest, getHistory
-│   ├── market.comment.ts         — AI-комментарий к снимку, кэш по монете и хешу фактов
-│   └── market.comment.spec.ts    — 6 тестов кэша и fallback'ов
+│   ├── market.types.ts           — Interval/Range, границы, isAllowed, COINS, SeriesPoint, MarketView (зеркало — frontend/src/types/market.ts)
+│   ├── market-data.service.ts    — свечи → ряды индикаторов, последняя свеча, кэш до закрытия следующей
+│   ├── market-data.service.spec.ts — 8 тестов: ряды против technicalindicators, кэш, 400/502
+│   ├── market.comment.ts         — AI-комментарий к MarketView, кэш по монете+интервалу
+│   └── market.comment.spec.ts    — 9 тестов: кэш, fallback'и, строки промпта
 ├── news/
 │   ├── news.controller.ts        — GET /news, GET /news/digest
 │   ├── news.module.ts
 │   ├── news.service.ts           — RSS-фиды (Cointelegraph, Coindesk, Decrypt), cron каждый час, дедуп, кэш
 │   ├── news.translator.ts        — LLM-перевод заголовков с валидацией формы
 │   └── news.types.ts             — NewsItem
-├── price/
-│   ├── price.controller.ts       — GET /price/:coinId, GET /price/history/:coinId
-│   ├── price.module.ts
-│   ├── price.scheduler.ts        — cron каждые 5 минут → снимок рынка по BTC/ETH/SOL
-│   ├── price.service.ts          — цена (Binance, fallback CoinGecko) + EMA/RSI/MACD/BB/MA5/тренд
-│   └── price.service.spec.ts     — 7 тестов: выборка окна против technicalindicators
 ├── prisma/
 │   ├── prisma.module.ts          — @Global(), экспортирует PrismaService
 │   └── prisma.service.ts         — PrismaClient + @prisma/adapter-pg
@@ -69,94 +69,92 @@ src/
 
 ## Все Endpoints
 - GET  /health
-- GET  /price/:coinId                     — текущая цена (побочно пишет строку PriceSnapshot, см. ниже)
-- GET  /price/history/:coinId?limit=50
-- POST /market/refresh                    — снять снимок рынка сейчас; ответ — снимок + aiComment
-- GET  /market/snapshot/:coinId           — последний снимок + aiComment; нет снимков → 200 с пустым телом
-- GET  /market/history/:coinId?limit=50   — история снимков, БЕЗ aiComment
+- GET  /market/candles/:coinId?interval=5m&range=24h — свечи диапазона + ряды индикаторов
+- GET  /market/view/:coinId?interval=5m              — последняя закрытая свеча интервала + aiComment
 - GET  /news                              — крипто-новости из RSS (Cointelegraph, Coindesk, Decrypt)
-- GET  /news/digest                       — AI-дайджест ленты (кэш по хешу id, генерится в refresh)
+- GET  /news/digest                       — AI-дайджест ленты (кэш по хешу id, генерится при обновлении ленты)
 - POST /backtest/run                      — прогон стратегии на исторических свечах
 
-Ручные запросы — `test.http`.
+Ручные запросы — `test.http`. Маршрутов `/price/*`, `/market/refresh`,
+`/market/snapshot`, `/market/history` нет — сняты в TASK-0004 вместе с кроном.
 
-## POST /market/refresh — формат запроса
-{
-"market": "BTC/USDT",
-"coinId": "bitcoin"
-}
+## Интервалы, диапазоны, ошибки
+- `coinId`: `bitcoin` | `ethereum` | `solana` (только пары Binance)
+- `interval`: `1m` | `5m` | `15m` | `1h` | `4h` | `1d`
+- `range`: `1h` | `4h` | `12h` | `24h` | `2w` | `1m` (30 дней) | `3m` (90) | `1y` (365)
+- Комбинация допустима, если свечей в диапазоне от `MIN_CANDLES` (12) до
+  `MAX_CANDLES` (5000): 24ч×5м = 288 ✓, 3мес×5м = 25 920 ✗, 4ч×1ч = 4 ✗.
+- `400` — неизвестная монета/интервал/диапазон или недопустимая комбинация
+  (сообщение называет причину).
+- `502 { message: 'Binance недоступен' }` — запрос к Binance упал;
+  `502 { message: 'Binance не отдал свечей' }` — `view` получил меньше 2
+  свечей (сразу после остановки биржи).
 
-## Снимок рынка — формат ответа (/market/refresh, /market/snapshot)
-Плоский, как строка `MarketSnapshot` в БД, плюс `aiComment`:
-{
-"id": number,
-"market": "BTC/USDT",
-"coinId": "bitcoin",
-"currentPrice": number,
-"previousPrice": number | null,
-"movingAverage": number | null,
-"ema9": number | null,
-"ema21": number | null,
-"rsi": number | null,
-"macdValue": number | null,
-"macdSignal": number | null,
-"macdHistogram": number | null,
-"bbUpper": number | null,
-"bbMiddle": number | null,
-"bbLower": number | null,
-"bbBandwidth": number | null,   — в процентах
-"trend": "up" | "down" | "flat",
-"createdAt": "2026-10-07T...",
-"aiComment": string | null      — 2-3 предложения на русском
-}
+## Формы ответов
+`/market/candles` → `{ coinId, market, interval, range, candles, series }`,
+`series[i].t === candles[i].t`, разогрев отрезан:
+- `Candle { t, open, high, low, close, volume }` — `t` = время открытия, мс
+- `SeriesPoint { t, close, ema9, ema21, rsi, macd, macdSignal,
+  macdHistogram, bbUpper, bbMiddle, bbLower, bbBandwidth }` — индикаторы на
+  закрытии свечи; `null` — периоду не хватило свечей; округление до 2
+  знаков (`close` — как у Binance); `bbBandwidth` — в процентах
 
-`/market/history` отдаёт массив таких же строк без `aiComment` — гонять
-модель на 50 строк незачем.
+`/market/view` → `MarketView { coinId, market, interval, closedAt, price,
+previousPrice, ma5, trend, latest, recent, aiComment }`: `closedAt` —
+closeTime последней закрытой свечи; `latest` — её `SeriesPoint`; `recent` —
+5 последних, старые → новые; `trend` — по 10 последним close.
+
+## Свечи и индикаторы (market-data.service.ts)
+- Последняя закрытая свеча — по локальным часам с запасом `CLOSE_MARGIN_MS`
+  (5 с): свеча, открытая на `floor((now − 5 с) / интервал) · интервал`, ещё
+  идёт. Запас — потому что кэш держит результат целый интервал.
+- Запрос к Binance — диапазон + `WARMUP` (500) свечей слева; индикаторы
+  считаются по всем close, разогрев отрезается по `t`. 500, а не 200: остаток
+  затравки = вес × её ошибка, на 1д при 200 карточка расходилась с графиком
+  на 0.01 (`../docs/DECISIONS.md` 2026-10-20).
+- Формулы — `indicators/indicators.ts` (одни с бэктестом); MA5 — `calcSMA`,
+  тренд — `calcTrend` (ups > downs × 1.5, перенос бывшего `getTrend`).
+- `getView` берёт свои 10 свечей + разогрев, а не диапазон графика:
+  карточка не зависит от вкладки; при `WARMUP` 500 `latest` совпадает с
+  последней точкой графика на любом диапазоне.
+- Кэш — до закрытия следующей свечи: ключ `монета|интервал|число свечей|
+  openTime последней закрытой`, 50 записей, вытеснение FIFO. Если Binance
+  ещё не отдал только что закрытую свечу — результат не кэшируется.
+- Дыры самой Binance (остановки биржи) отдаются как есть — шаг `t` больше
+  интервала, фронт рвёт линии.
 
 ## AI-комментарий (market.comment.ts)
-- Описывает обстановку по показаниям индикаторов. Промпт запрещает
-  рекомендации и действия («купить», «продать», «вход», «стоп», «стоит»).
+- `describeView(view)` описывает обстановку на последней закрытой свече
+  интервала. Промпт запрещает рекомендации и действия («купить», «продать»,
+  «вход», «стоп», «стоит»).
+- В промпте — интервал, тренд за 10 свечей и 5 последних свечей по строке
+  на индикатор, слева направо от старой к последней, с **изменением за окно,
+  посчитанным кодом** («рост на 130.11»), плюс строка «EMA9 относительно
+  EMA21» по свечам. Сравнивая числа сама, модель путала порядок и знак
+  (критик T5). Системный промпт: динамику — только по приведённым данным.
 - Генерится «на лету» в контроллере, в БД не хранится.
-- Кэш — in-memory `Map` по `coinId`, ключ — хеш тех же фактов, что уходят в
-  промпт (включая `currentPrice`). Цена меняется в каждом снимке, поэтому
-  при опросе фронта кэш почти не срабатывает: ~1 вызов Groq на снимок.
-  Принято осознанно — `../docs/DECISIONS.md`, запись 2026-10-07.
-- Отказ модели не роняет маршрут: весь `describe()` под try, fallback на
-  прошлый комментарий монеты, иначе `null`.
+- Кэш — in-memory `Map` по `coinId|interval`, ключ — хеш тех же фактов, что
+  уходят в промпт. Факты меняются на каждом закрытии свечи → на 1м Groq
+  зовётся раз в минуту на монету (план TASK-0004, trade-off 6).
+- Отказ модели не роняет маршрут: весь `generate()` под try, fallback на
+  прошлый комментарий ключа, иначе `null`.
 
 ## Модели БД
-- PriceSnapshot — история цен (coinId, price, createdAt)
-- MarketSnapshot — снимок рынка: цена, previousPrice, MA5, EMA9/21, RSI,
-  MACD (value/signal/histogram), BB (upper/middle/lower/bandwidth), тренд
+- `PriceSnapshot`, `MarketSnapshot` — **архив**: с TASK-0004 в них никто не
+  пишет и никто не читает. Схема и данные оставлены, миграции нет
+  (план TASK-0004, trade-off 4); удаление — отдельным шагом, если понадобится.
 
-## Индикаторы (price.service.ts)
-Формулы EMA/RSI/MACD — в `indicators/indicators.ts`, одни на живой контур
-и бэктест. BB в живом контуре — своя копия в `getBollingerBands` (формула
-совпадает с `calcBB`, тестами сервиса не покрыта; дубль — «Замечено рядом»
-TASK-0002). `getEMA`/`getRSI`/`getMACD` берут последние `INDICATOR_WINDOW`
-(100) строк `PriceSnapshot` (`desc` + `take` + `reverse` → хронология),
-считают общей функцией и отдают последний элемент; нехватка данных → `null`.
-Окно — и потолок периода: `getEMA` с `period > 100` всегда `null`.
-
-- getEMA(coinId, period) — экспоненциальное скользящее среднее
-- getRSI(coinId, period=14) — индекс относительной силы, сглаживание Уайлдера
-- getMACD(coinId) — MACD(12,26,9): линия, сигнальная линия, histogram
-- getBollingerBands(coinId, period=20) — upper/middle/lower/bandwidth
-- getMovingAverage(coinId, points=5) — простое скользящее среднее MA5
-- getTrend(coinId, points=10) — up/down/flat по соотношению ups/downs
-- getPreviousPrice(coinId) — предыдущая цена из БД
-- getHistory(coinId, limit) — история цен
-
-`captureSnapshot` (market.service.ts) пишет цену (`getPrice`) **до** чтения
-индикаторов, остальные `get*` — параллельно: свежая строка входит в окно.
-
-**Известное — TASK-0004 (`../docs/aidd/prd/TASK-0004.prd.md`):** окно — по
-числу строк, не по времени. После остановки бэкенда оно склеивает паузу:
-скачок цены через неё искажает RSI и раздувает BB (до ~100 мин для BB,
-часы для EMA/RSI/MACD). Истории до первого запуска и за простой в БД нет.
-
-**Долг:** `getPrice` пишет строку в `PriceSnapshot` на каждый вызов —
-запись внутри геттера. Отдельный тикет.
+## Известное
+- Binance — единственный источник цен: недоступен → `502`, фронт показывает
+  баннер. `api.binance.com` недоступен из ряда юрисдикций.
+- `/market/view` ждёт Groq синхронно, таймаута у клиента нет: промах кэша
+  добавляет 1–1.7 с к ответу с ценой (tasklist TASK-0004, «Замечено рядом»).
+- Сразу после остановки биржи `view` может ответить 502 «Binance не отдал
+  свечей» при доступной бирже (дыра в последних 10 слотах).
+- AI читает посчитанные изменения верно не всегда: на 1д рост отрицательной
+  MACD-гистограммы назван «усилением нисходящего давления». Оракула у
+  текста нет — проверка живой сверкой.
+- `backtest.service.ts` держит свой `fetchCandles` — дубль `binance/klines.ts`.
 
 ## Переменные окружения (.env)
 GROQ_API_KEY=...
@@ -179,15 +177,22 @@ npm run start:dev
 
 ## Тесты
 npm run test
-22 теста, только с внешним оракулом:
-- `indicators/indicators.spec.ts` — 9: EMA(9/21/26), RSI(14) на ряде и трёх
-  краевых (ровный, рост, падение), MACD, BB(20) против technicalindicators.
-  RSI сверяется с допуском 0.005 — тест падал на старом простом среднем
-  (TASK-0002.2), не false-green.
-- `price/price.service.spec.ts` — 7: EMA/RSI/MACD сервиса на последних 100
-  ценах против technicalindicators; фейковая Prisma честно применяет
-  `orderBy`/`take`; кейсы нехватки данных → `null`.
-- `market/market.comment.spec.ts` — 6: кэш комментария и fallback'и при отказе модели
+31 тест, только с внешним оракулом:
+- `indicators/indicators.spec.ts` — 11: EMA(9/21/26), RSI(14) на ряде и трёх
+  краевых, MACD, BB(20), ширина BB, SMA(5) против technicalindicators.
+- `binance/klines.spec.ts` — 3: пагинация 2300 свечей за 3 запроса,
+  отсечение незакрытой свечи, защита от «страница не сдвинулась»; фейк HTTP
+  честно применяет `startTime`/`endTime`/`limit`.
+- `market/market-data.service.spec.ts` — 8: все поля рядов по всем точкам
+  против technicalindicators на тех же close, разогрев не утёк, кэш до
+  закрытия свечи (счётчик запросов), запас на часы, 1д с крупными ценами
+  (`latest` = последняя точка графика), 400/502.
+- `market/market.comment.spec.ts` — 9: кэш и fallback'и при отказе модели,
+  точные строки промпта (изменения — арифметика), разные интервалы — разные
+  записи кэша.
+
+Каждый новый тест прогнан против мутанта кода (красный) — итоги в
+`../docs/aidd/tasklist/TASK-0004.md`.
 
 `npm run test:e2e` сломан до миграции (ждёт `GET /` → «Hello World!»).
 
