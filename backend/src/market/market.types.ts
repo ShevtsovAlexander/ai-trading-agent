@@ -9,6 +9,8 @@ export interface Candle {
   volume: number;
 }
 
+// Interval/Range, INTERVAL_MS/RANGE_MS, MIN/MAX_CANDLES, isAllowed и формы
+// ответов продублированы во frontend/src/types/market.ts — меняются вместе.
 export type Interval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
 export type Range = '1h' | '4h' | '12h' | '24h' | '2w' | '1m' | '3m' | '1y';
 

@@ -1,9 +1,13 @@
 import { api } from './client';
 import type {
+    Interval,
     MarketRefreshDto,
+    MarketSeries,
     MarketSnapshot,
     MarketState,
+    MarketView,
     PriceSnapshot,
+    Range,
 } from "../types/market.ts";
 
 export const refreshMarket = async (
@@ -35,4 +39,25 @@ export const getPriceHistory = async (coinId: string, limit = 50): Promise<Price
 export const getLatest = async (coinId: string): Promise<MarketState | null> => {
     const response = await api.get<MarketState | "">(`/market/snapshot/${coinId}`);
     return response.data || null;
+};
+
+// Свечи диапазона + ряды индикаторов. Недопустимая комбинация — 400,
+// Binance недоступен — 502.
+export const getCandles = async (
+    coinId: string,
+    interval: Interval,
+    range: Range
+): Promise<MarketSeries> => {
+    const response = await api.get<MarketSeries>(`/market/candles/${coinId}`, {
+        params: { interval, range },
+    });
+    return response.data;
+};
+
+// Последняя закрытая свеча интервала + AI-комментарий к ней
+export const getView = async (coinId: string, interval: Interval): Promise<MarketView> => {
+    const response = await api.get<MarketView>(`/market/view/${coinId}`, {
+        params: { interval },
+    });
+    return response.data;
 };
