@@ -1,13 +1,12 @@
 /**
- * Сравнение calcEMA / calcRSI / calcMACD / calcBB из BacktestService
+ * Сравнение calcEMA / calcRSI / calcMACD / calcBB / calcSMA из indicators.ts
  * с библиотекой technicalindicators на одних и тех же ценах.
  *
- * Запуск: npm run test -- backtest.indicators
+ * Запуск: npm run test -- indicators
  */
 
 import * as ti from 'technicalindicators';
-import { HttpService } from '@nestjs/axios';
-import { BacktestService } from './backtest.service';
+import { calcBB, calcEMA, calcMACD, calcRSI, calcSMA } from './indicators';
 
 // ---------------------------------------------------------------------------
 // Детерминированные тестовые цены (50 значений) — синусоида + линейный тренд
@@ -25,19 +24,13 @@ function near(a: number, b: number, tol = TOLERANCE): boolean {
   return Math.abs(a - b) / (Math.abs(b) || 1) <= tol;
 }
 
-// Достаём приватные методы через any
-function getSvc(): BacktestService {
-  return new BacktestService({} as HttpService);
-}
-
 // ---------------------------------------------------------------------------
 // EMA
 // ---------------------------------------------------------------------------
 describe('calcEMA vs technicalindicators.EMA', () => {
   [9, 21, 26].forEach((period) => {
     it(`EMA(${period}) — последние 10 значений совпадают с точностью ${TOLERANCE}`, () => {
-      const svc = getSvc();
-      const mine: number[] = (svc as any).calcEMA(PRICES, period);
+      const mine: number[] = calcEMA(PRICES, period);
 
       // TI возвращает компактный массив без NaN-префикса
       // mine[period-1] соответствует ti[0], mine[i] → ti[i - (period-1)]
@@ -74,9 +67,13 @@ describe('calcEMA vs technicalindicators.EMA', () => {
 // RSI
 // ---------------------------------------------------------------------------
 describe('calcRSI vs technicalindicators.RSI', () => {
-  it('RSI(14) — все значения совпадают с точностью 0.01%', () => {
-    const svc = getSvc();
-    const mine: number[] = (svc as any).calcRSI(PRICES, 14);
+  // Эталон округляет RSI до 2 знаков (toFixed(2) в technicalindicators),
+  // поэтому допуск абсолютный: относительный 0.01% при RSI около 50 съедается
+  // самим округлением.
+  const RSI_TOLERANCE = 0.005 + 1e-9;
+
+  it('RSI(14) — все значения совпадают с точностью 0.005 (эталон округляет до 2 знаков)', () => {
+    const mine: number[] = calcRSI(PRICES, 14);
 
     // TI RSI: первое значение соответствует mine[14]
     const tiResult: number[] = ti.RSI.calculate({ period: 14, values: PRICES });
@@ -89,7 +86,7 @@ describe('calcRSI vs technicalindicators.RSI', () => {
       const myVal = mine[my_i];
       const tiVal = tiResult[ti_i];
 
-      if (!near(myVal, tiVal)) {
+      if (!isFinite(myVal) || Math.abs(myVal - tiVal) > RSI_TOLERANCE) {
         discrepancies.push(
           `idx=${my_i}: mine=${myVal?.toFixed(4)} ti=${tiVal?.toFixed(4)} diff=${Math.abs(myVal - tiVal).toFixed(4)}`,
         );
@@ -99,15 +96,32 @@ describe('calcRSI vs technicalindicators.RSI', () => {
     if (discrepancies.length > 0) {
       console.log(`\n=== RSI(14) расхождения (${discrepancies.length}/${tiResult.length}): ===`);
       discrepancies.forEach((d) => console.log(' ', d));
-      console.log('\nNOTE: technicalindicators использует Wilder Smoothing (EMA-style),');
-      console.log('      calcRSI использует простое среднее — алгоритмы различаются.');
     } else {
       console.log(`RSI(14): все ${tiResult.length} значений совпадают ✓`);
     }
 
-    // Не падаем автоматически — показываем расхождения для анализа
-    // expect(discrepancies.length).toBe(0);
-    expect(discrepancies.length).toBeGreaterThanOrEqual(0); // всегда проходит
+    expect(discrepancies.length).toBe(0);
+    // Пустой эталон прошёл бы цикл выше без единой проверки
+    expect(tiResult.length).toBe(PRICES.length - offset);
+    // RSI валиден с индекса period — до него значений быть не должно
+    expect(mine.slice(0, offset).every(Number.isNaN)).toBe(true);
+  });
+
+  // В PRICES нет 14 дельт одного знака подряд, поэтому ветки avgLoss = 0 /
+  // avgGain = 0 основной тест не проходит. Ровный ряд — оба нуля сразу:
+  // эталон сначала проверяет avgLoss и отдаёт 100.
+  [
+    { name: 'ровный ряд', values: Array.from({ length: 20 }, () => 100) },
+    { name: 'монотонный рост', values: Array.from({ length: 20 }, (_, i) => 100 + i) },
+    { name: 'монотонное падение', values: Array.from({ length: 20 }, (_, i) => 100 - i) },
+  ].forEach(({ name, values }) => {
+    it(`RSI(14) — ${name} совпадает с эталоном`, () => {
+      const mine = calcRSI(values, 14).slice(14);
+      const tiResult = ti.RSI.calculate({ period: 14, values });
+
+      expect(tiResult.length).toBe(values.length - 14);
+      expect(mine).toEqual(tiResult);
+    });
   });
 });
 
@@ -116,8 +130,7 @@ describe('calcRSI vs technicalindicators.RSI', () => {
 // ---------------------------------------------------------------------------
 describe('calcMACD vs technicalindicators.MACD', () => {
   it('MACD line совпадает начиная с индекса 25', () => {
-    const svc = getSvc();
-    const mine = (svc as any).calcMACD(PRICES);
+    const mine = calcMACD(PRICES);
 
     const tiResult = ti.MACD.calculate({
       values: PRICES,
@@ -197,8 +210,7 @@ describe('calcMACD vs technicalindicators.MACD', () => {
 // ---------------------------------------------------------------------------
 describe('calcBB vs technicalindicators.BollingerBands', () => {
   it('BB(20) upper/middle/lower совпадают с точностью 0.01%', () => {
-    const svc = getSvc();
-    const mine = (svc as any).calcBB(PRICES, 20);
+    const mine = calcBB(PRICES, 20);
 
     // TI BB: первый результат = индекс 19 у mine (period-1)
     const tiResult = ti.BollingerBands.calculate({
@@ -239,5 +251,49 @@ describe('calcBB vs technicalindicators.BollingerBands', () => {
 
       expect(discrepancies.length).toBe(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BB bandwidth — ширина в процентах от middle; эталон — та же формула по
+// полосам technicalindicators
+// ---------------------------------------------------------------------------
+describe('calcBB.bandwidth vs technicalindicators.BollingerBands', () => {
+  it('BB(20) bandwidth = (upper - lower) / middle * 100 по полосам эталона', () => {
+    const mine = calcBB(PRICES, 20);
+    const tiResult = ti.BollingerBands.calculate({
+      period: 20,
+      values: PRICES,
+      stdDev: 2,
+    });
+    const offset = 19;
+
+    expect(tiResult.length).toBe(PRICES.length - offset);
+    const discrepancies = tiResult.filter((row, ti_i) => {
+      const expected = ((row.upper - row.lower) / row.middle) * 100;
+      return !near(mine.bandwidth[ti_i + offset], expected);
+    });
+
+    expect(discrepancies.length).toBe(0);
+    expect(mine.bandwidth.slice(0, offset).every(Number.isNaN)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SMA
+// ---------------------------------------------------------------------------
+describe('calcSMA vs technicalindicators.SMA', () => {
+  it('SMA(5) — все значения совпадают с точностью 0.01%', () => {
+    const mine = calcSMA(PRICES, 5);
+    const tiResult = ti.SMA.calculate({ period: 5, values: PRICES });
+    const offset = 4;
+
+    expect(tiResult.length).toBe(PRICES.length - offset);
+    const discrepancies = tiResult.filter(
+      (tiVal, ti_i) => !near(mine[ti_i + offset], tiVal),
+    );
+
+    expect(discrepancies.length).toBe(0);
+    expect(mine.slice(0, offset).every(Number.isNaN)).toBe(true);
   });
 });

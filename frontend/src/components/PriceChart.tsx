@@ -8,10 +8,9 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import type { PriceSnapshot, MarketSnapshot } from "../types/market";
-import { useState } from "react";
-
-type ChartRange = "1h" | "4h" | "12h" | "24h" | "2w" | "1m" | "3m";
+import { INTERVAL_LABELS, INTERVAL_MS, RANGE_MS, isAllowed } from "../types/market";
+import type { Interval, MarketSeries, Range } from "../types/market";
+import { formatCandleTime } from "../utils/candleTime";
 
 interface Coin {
   id: string;
@@ -20,21 +19,29 @@ interface Coin {
   color: string;
 }
 
+// data — свечи диапазона и ряды индикаторов от бэкенда; null — данных для
+// текущей монеты и диапазона ещё (или уже) нет. Диапазон хранит App: по нему
+// идёт запрос, и вкладка не должна расходиться с тем, что нарисовано.
 interface Props {
-  history: PriceSnapshot[];
-  snapshots: MarketSnapshot[];
+  data: MarketSeries | null;
   coin: Coin;
-  onRangeChange: (limit: number) => void;
+  interval: Interval;
+  range: Range;
+  onRangeChange: (range: Range) => void;
+  onIntervalChange: (interval: Interval) => void;
 }
 
-const RANGES: { label: string; value: ChartRange; limit: number }[] = [
-  { label: "1ч", value: "1h", limit: 12 },
-  { label: "4ч", value: "4h", limit: 48 },
-  { label: "12ч", value: "12h", limit: 144 },
-  { label: "24ч", value: "24h", limit: 288 },
-  { label: "2нед", value: "2w", limit: 4032 },
-  { label: "1мес", value: "1m", limit: 8640 },
-  { label: "3мес", value: "3m", limit: 25920 },
+const INTERVALS: Interval[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
+
+const RANGES: { label: string; value: Range }[] = [
+  { label: "1ч", value: "1h" },
+  { label: "4ч", value: "4h" },
+  { label: "12ч", value: "12h" },
+  { label: "24ч", value: "24h" },
+  { label: "2нед", value: "2w" },
+  { label: "1мес", value: "1m" },
+  { label: "3мес", value: "3m" },
+  { label: "1г", value: "1y" },
 ];
 
 const Container = styled.div`
@@ -96,6 +103,25 @@ const RangeTabs = styled.div`
   gap: 4px;
 `;
 
+// Интервалы и диапазоны — два ряда кнопок одного вида через разделитель
+const Selectors = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+`;
+
+// Подписи рядов: «1ч» и «4ч» есть и среди свечей, и среди периодов
+const SelectorLabel = styled.span`
+  font-size: ${({ theme }) => theme.fontSize.xs};
+  color: ${({ theme }) => theme.colors.textMuted};
+`;
+
+const Separator = styled.span`
+  width: 1px;
+  height: 14px;
+  background: ${({ theme }) => theme.colors.border};
+`;
+
 const RangeBtn = styled.button<{ active: boolean }>`
   padding: 2px 8px;
   border-radius: ${({ theme }) => theme.radius.sm};
@@ -109,47 +135,27 @@ const RangeBtn = styled.button<{ active: boolean }>`
     active ? theme.colors.purple : theme.colors.textMuted};
   cursor: pointer;
   transition: all 0.15s;
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
 `;
-
-/**
- * Матчим каждый PriceSnapshot к ближайшему MarketSnapshot по времени (±5 мин).
- * Прямой матч по createdAt ненадёжен — timestamps разные.
- */
-const matchSnapshots = (
-  history: PriceSnapshot[],
-  snapshots: MarketSnapshot[]
-): (PriceSnapshot & { snapshot: MarketSnapshot | null })[] => {
-  if (!snapshots.length) return history.map((h) => ({ ...h, snapshot: null }));
-
-  return history.map((h) => {
-    const hTime = new Date(h.createdAt).getTime();
-    let closest: MarketSnapshot | null = null;
-    let minDiff = 5 * 60 * 1000; // 5 минут — макс окно
-
-    for (const s of snapshots) {
-      const diff = Math.abs(new Date(s.createdAt).getTime() - hTime);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closest = s;
-      }
-    }
-
-    return { ...h, snapshot: closest };
-  });
-};
 
 // --- tooltip ---
 
-// Точка графика: снимок цены плюс подмешанные индикаторы из снимка рынка.
-// Типизирована явно, чтобы тултип не ходил через any — recharts отдаёт
-// элемент данных в payload[n].payload как есть.
+// Точка графика: закрытая свеча (t — время открытия) плюс индикаторы на её
+// закрытии. Типизирована явно, чтобы тултип не ходил через any — recharts
+// отдаёт элемент данных в payload[n].payload как есть.
+// Пустая точка-разрыв (см. gapMs) — все поля, кроме t, null.
 interface ChartPoint {
-  createdAt: string;
-  price: number;
+  t: number;
+  price: number | null;
   ema9: number | null;
   ema21: number | null;
   bbUpper: number | null;
   bbLower: number | null;
+  bbRange: [number, number] | null;
 }
 
 interface TooltipProps {
@@ -157,17 +163,21 @@ interface TooltipProps {
   payload?: { payload: ChartPoint }[];
 }
 
-const CustomTooltip = ({ active, payload }: TooltipProps) => {
+const CustomTooltip = ({
+  active,
+  payload,
+  withDate,
+  interval,
+}: TooltipProps & { withDate: boolean; interval: Interval }) => {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
+  // На точке-разрыве показывать нечего
+  if (d.price == null) return null;
 
   return (
     <TooltipContainer>
       <div style={{ color: "#888", marginBottom: 4 }}>
-        {new Date(d.createdAt).toLocaleTimeString("ru-RU", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
+        {formatCandleTime(d.t, interval, withDate)}
       </div>
       <div style={{ color: "#fff", fontWeight: 500 }}>
         ${d.price.toLocaleString()}
@@ -189,59 +199,127 @@ const CustomTooltip = ({ active, payload }: TooltipProps) => {
   );
 };
 
-const getTickFormatter = (range: ChartRange) => (v: string) => {
+const getTickFormatter = (withDate: boolean) => (v: number) => {
   const d = new Date(v);
-  if (range === "2w" || range === "1m" || range === "3m") {
+  if (withDate) {
     return d.toLocaleDateString("ru-RU", { month: "short", day: "numeric" });
   }
   return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 };
 
+// Дыра между соседними свечами длиннее 3 интервалов — Binance не отдал
+// свечи (остановка биржи). Вставляем пустую точку, чтобы все серии рвались,
+// а не тянули прямую через пропуск.
+const GAP_INTERVALS = 3;
+
 // --- component ---
 
 export const PriceChart = ({
-  history,
-  snapshots,
+  data: series,
   coin,
+  interval,
+  range,
   onRangeChange,
+  onIntervalChange,
 }: Props) => {
-  const [activeRange, setActiveRange] = useState<ChartRange>("24h");
+  // Бэкенд отдаёт ровно свечи диапазона, series[i].t === candles[i].t —
+  // окно и сопоставление по времени не нужны
+  const points: ChartPoint[] = (series?.candles ?? []).map((c, i) => {
+    const s = series!.series[i];
+    return {
+      t: c.t,
+      price: c.close,
+      ema9: s.ema9,
+      ema21: s.ema21,
+      bbUpper: s.bbUpper,
+      bbLower: s.bbLower,
+      // Полоса BB для Area: [низ, верх]. Без одной из границ — null, а не
+      // [null, null]: точка без BB полосы не рисует
+      bbRange:
+        s.bbLower != null && s.bbUpper != null ? [s.bbLower, s.bbUpper] : null,
+    };
+  });
 
-  const handleRange = (r: (typeof RANGES)[0]) => {
-    setActiveRange(r.value);
-    onRangeChange(r.limit);
-  };
+  const gapMs = GAP_INTERVALS * INTERVAL_MS[interval];
+  const data: ChartPoint[] = [];
+  for (const p of points) {
+    const prev = data[data.length - 1];
+    if (prev && p.t - prev.t > gapMs) {
+      data.push({
+        t: (prev.t + p.t) / 2,
+        price: null,
+        ema9: null,
+        ema21: null,
+        bbUpper: null,
+        bbLower: null,
+        bbRange: null,
+      });
+    }
+    data.push(p);
+  }
 
-  const matched = matchSnapshots(history, snapshots);
+  // Дата в подписях и тултипе — на окнах длиннее суток
+  const withDate = RANGE_MS[range] > RANGE_MS["24h"];
+  // Подписи оси — только на реальных точках: точка-разрыв посреди дыры
+  // подписала бы дату, в которую данных нет
+  const ticks = points.map((p) => p.t);
 
-  const data = matched.map((h) => ({
-    ...h,
-    ema9: h.snapshot?.ema9 ?? null,
-    ema21: h.snapshot?.ema21 ?? null,
-    bbUpper: h.snapshot?.bbUpper ?? null,
-    bbLower: h.snapshot?.bbLower ?? null,
-    bbRange: h.snapshot ? [h.snapshot.bbLower, h.snapshot.bbUpper] : null,
-  }));
-
-  const prices = history.map((h) => h.price);
-  const min = Math.min(...prices) * 0.999;
-  const max = Math.max(...prices) * 1.001;
+  // Домен Y — по цене и границам BB с отступом 0.1%. Обрезать серии recharts
+  // и так не даст: при allowDataOverflow=false он расширяет заданный домен до
+  // данных. Здесь — отступ от краёв и пустая история без Infinity. Цикл, а не
+  // Math.min(...arr): до 5000 свечей × 3 значения — у лимита аргументов
+  // в Safari.
+  let min = Infinity;
+  let max = -Infinity;
+  for (const d of data) {
+    for (const v of [d.price, d.bbLower, d.bbUpper]) {
+      if (v == null) continue;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  const domain: [number | string, number | string] =
+    min <= max ? [min * 0.999, max * 1.001] : ["auto", "auto"];
 
   return (
     <Container>
       <Controls>
         <Title>{coin.market} — цена / EMA / BB</Title>
+        <Selectors>
+          <SelectorLabel>свеча</SelectorLabel>
+          <RangeTabs>
+            {INTERVALS.map((iv) => (
+              <RangeBtn
+                key={iv}
+                active={interval === iv}
+                onClick={() => onIntervalChange(iv)}
+              >
+                {INTERVAL_LABELS[iv]}
+              </RangeBtn>
+            ))}
+          </RangeTabs>
+          <Separator />
+          <SelectorLabel>период</SelectorLabel>
         <RangeTabs>
           {RANGES.map((r) => (
             <RangeBtn
               key={r.value}
-              active={activeRange === r.value}
-              onClick={() => handleRange(r)}
+              active={range === r.value}
+              // Больше MAX_CANDLES свечей на интервале — бэкенд ответит 400;
+              // кнопка гаснет заранее (3мес на 5м — 25 920 свечей)
+              disabled={!isAllowed(r.value, interval)}
+              title={
+                isAllowed(r.value, interval)
+                  ? undefined
+                  : "Слишком много свечей для этого интервала"
+              }
+              onClick={() => onRangeChange(r.value)}
             >
               {r.label}
             </RangeBtn>
           ))}
         </RangeTabs>
+        </Selectors>
       </Controls>
 
       <Legend>
@@ -266,36 +344,33 @@ export const PriceChart = ({
       <ResponsiveContainer width="100%" height={200}>
         <ComposedChart data={data}>
           <XAxis
-            dataKey="createdAt"
-            tickFormatter={getTickFormatter(activeRange)}
+            dataKey="t"
+            type="number"
+            scale="time"
+            domain={["dataMin", "dataMax"]}
+            ticks={ticks}
+            tickFormatter={getTickFormatter(withDate)}
             tick={{ fill: "#555", fontSize: 10 }}
             axisLine={false}
             tickLine={false}
             interval="preserveStartEnd"
           />
           <YAxis
-            domain={[min, max]}
+            domain={domain}
             tick={{ fill: "#555", fontSize: 10 }}
             axisLine={false}
             tickLine={false}
             tickFormatter={(v) => `$${v.toLocaleString()}`}
             width={75}
           />
-          <Tooltip content={<CustomTooltip />} />
-          <Area
-            type="monotone"
-            dataKey="bbUpper"
-            stroke="#334155"
-            strokeWidth={1}
-            fill="none"
-            strokeDasharray="3 3"
-            dot={false}
-            activeDot={false}
-            isAnimationActive={false}
+          <Tooltip
+            content={<CustomTooltip withDate={withDate} interval={interval} />}
           />
+          {/* Полоса BB: Area по [bbLower, bbUpper] заливает между границами
+              и обводит обе (range area recharts) */}
           <Area
             type="monotone"
-            dataKey="bbLower"
+            dataKey="bbRange"
             stroke="#334155"
             strokeWidth={1}
             fill="#1e293b"
@@ -314,7 +389,6 @@ export const PriceChart = ({
             dot={false}
             activeDot={false}
             isAnimationActive={false}
-            connectNulls
           />
           <Line
             type="monotone"
@@ -325,7 +399,6 @@ export const PriceChart = ({
             dot={false}
             activeDot={false}
             isAnimationActive={false}
-            connectNulls
           />
           <Line
             type="monotone"
