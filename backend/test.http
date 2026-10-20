@@ -13,3 +13,23 @@ GET http://localhost:3000/market/snapshot/bitcoin
 ###
 
 GET http://localhost:3000/market/history/bitcoin?limit=10
+
+
+###
+
+# Свечи + ряды индикаторов: 24ч на 5м — 288 свечей
+GET http://localhost:3000/market/candles/bitcoin?interval=5m&range=24h
+
+###
+
+GET http://localhost:3000/market/candles/ethereum?interval=1h&range=3m
+
+###
+
+# Недопустимая комбинация (25 920 свечей > 5000) — 400
+GET http://localhost:3000/market/candles/bitcoin?interval=5m&range=3m
+
+###
+
+# Последняя закрытая свеча интервала для карточки
+GET http://localhost:3000/market/view/bitcoin?interval=5m
