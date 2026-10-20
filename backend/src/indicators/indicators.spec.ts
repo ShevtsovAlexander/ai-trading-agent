@@ -1,12 +1,12 @@
 /**
- * Сравнение calcEMA / calcRSI / calcMACD / calcBB из indicators.ts
+ * Сравнение calcEMA / calcRSI / calcMACD / calcBB / calcSMA из indicators.ts
  * с библиотекой technicalindicators на одних и тех же ценах.
  *
  * Запуск: npm run test -- indicators
  */
 
 import * as ti from 'technicalindicators';
-import { calcBB, calcEMA, calcMACD, calcRSI } from './indicators';
+import { calcBB, calcEMA, calcMACD, calcRSI, calcSMA } from './indicators';
 
 // ---------------------------------------------------------------------------
 // Детерминированные тестовые цены (50 значений) — синусоида + линейный тренд
@@ -251,5 +251,49 @@ describe('calcBB vs technicalindicators.BollingerBands', () => {
 
       expect(discrepancies.length).toBe(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BB bandwidth — ширина в процентах от middle; эталон — та же формула по
+// полосам technicalindicators
+// ---------------------------------------------------------------------------
+describe('calcBB.bandwidth vs technicalindicators.BollingerBands', () => {
+  it('BB(20) bandwidth = (upper - lower) / middle * 100 по полосам эталона', () => {
+    const mine = calcBB(PRICES, 20);
+    const tiResult = ti.BollingerBands.calculate({
+      period: 20,
+      values: PRICES,
+      stdDev: 2,
+    });
+    const offset = 19;
+
+    expect(tiResult.length).toBe(PRICES.length - offset);
+    const discrepancies = tiResult.filter((row, ti_i) => {
+      const expected = ((row.upper - row.lower) / row.middle) * 100;
+      return !near(mine.bandwidth[ti_i + offset], expected);
+    });
+
+    expect(discrepancies.length).toBe(0);
+    expect(mine.bandwidth.slice(0, offset).every(Number.isNaN)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SMA
+// ---------------------------------------------------------------------------
+describe('calcSMA vs technicalindicators.SMA', () => {
+  it('SMA(5) — все значения совпадают с точностью 0.01%', () => {
+    const mine = calcSMA(PRICES, 5);
+    const tiResult = ti.SMA.calculate({ period: 5, values: PRICES });
+    const offset = 4;
+
+    expect(tiResult.length).toBe(PRICES.length - offset);
+    const discrepancies = tiResult.filter(
+      (tiVal, ti_i) => !near(mine[ti_i + offset], tiVal),
+    );
+
+    expect(discrepancies.length).toBe(0);
+    expect(mine.slice(0, offset).every(Number.isNaN)).toBe(true);
   });
 });

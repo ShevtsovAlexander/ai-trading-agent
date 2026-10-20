@@ -121,3 +121,35 @@ export function calcBB(
 
   return { upper, middle, lower, bandwidth };
 }
+
+// Простое скользящее среднее. Массив длиной prices.length, валиден с индекса
+// period-1 (до него NaN) — как calcEMA/calcBB. MA5 = calcSMA(prices, 5).
+export function calcSMA(prices: number[], period: number): number[] {
+  const result = new Array<number>(prices.length).fill(NaN);
+
+  for (let i = period - 1; i < prices.length; i++) {
+    const slice = prices.slice(i - period + 1, i + 1);
+    result[i] = slice.reduce((a, b) => a + b, 0) / period;
+  }
+
+  return result;
+}
+
+// Тренд по числу шагов вверх/вниз: построчный перенос PriceService.getTrend.
+// Цены — от старых к новым (как свечи Binance): развёрнутый ряд молча
+// инвертирует тренд. Окно (последние 10 цен) отрезает вызывающий.
+// Эталона у правила нет — тестом не покрыто.
+export function calcTrend(prices: number[]): 'up' | 'down' | 'flat' {
+  if (prices.length < 2) return 'flat';
+
+  let ups = 0,
+    downs = 0;
+  for (let i = 1; i < prices.length; i++) {
+    if (prices[i] > prices[i - 1]) ups++;
+    else if (prices[i] < prices[i - 1]) downs++;
+  }
+
+  if (ups > downs * 1.5) return 'up';
+  if (downs > ups * 1.5) return 'down';
+  return 'flat';
+}
