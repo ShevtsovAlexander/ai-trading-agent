@@ -1,9 +1,19 @@
 import styled from 'styled-components';
-import type { MarketState } from '../types/market';
+import { INTERVAL_MS } from '../types/market';
+import type { Interval, MarketView } from '../types/market';
 
 interface Props {
-    data: MarketState;
+    data: MarketView;
 }
+
+const INTERVAL_LABELS: Record<Interval, string> = {
+    '1m': '1м',
+    '5m': '5м',
+    '15m': '15м',
+    '1h': '1ч',
+    '4h': '4ч',
+    '1d': '1д',
+};
 
 const TREND_LABELS = {
     up: '↑ Рост',
@@ -31,6 +41,11 @@ const Market = styled.div`
     font-size: ${({ theme }) => theme.fontSize.base};
     font-weight: 600;
     color: ${({ theme }) => theme.colors.text};
+`;
+
+const Candle = styled.div`
+    font-size: ${({ theme }) => theme.fontSize.xs};
+    color: ${({ theme }) => theme.colors.textMuted};
 `;
 
 const StatsGrid = styled.div`
@@ -91,41 +106,57 @@ const macdColor = (histogram: number | null) => {
     return histogram > 0 ? '#4ade80' : '#f87171';
 };
 
+// Время закрытия свечи: closedAt — последняя миллисекунда, +1 даёт ровную
+// границу (18:20, а не 18:19). Дата — для свечей от часа: закрытие может
+// быть не сегодня.
+const closedLabel = (closedAt: number, interval: Interval) =>
+    new Date(closedAt + 1).toLocaleString('ru-RU', {
+        ...(INTERVAL_MS[interval] >= INTERVAL_MS['1h'] && {
+            day: 'numeric',
+            month: 'short',
+        }),
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+
 // --- component ---
 
 export const MarketStateCard = ({ data }: Props) => {
-    const { ema9, ema21, rsi } = data;
+    // Индикаторы — на последней закрытой свече интервала
+    const { ema9, ema21, rsi } = data.latest;
 
-    // Форма снимка одна — плоская (нормализована в T5), поэтому type guard,
-    // различавший её с вложенной, и ветки под вложенную убраны.
-    const macd = data.macdValue != null ? {
-        macd: data.macdValue,
-        signal: data.macdSignal!,
-        histogram: data.macdHistogram!,
+    const macd = data.latest.macd != null ? {
+        macd: data.latest.macd,
+        signal: data.latest.macdSignal!,
+        histogram: data.latest.macdHistogram!,
     } : null;
 
-    const bb = data.bbUpper != null ? {
-        upper: data.bbUpper,
-        middle: data.bbMiddle!,
-        lower: data.bbLower!,
-        bandwidth: data.bbBandwidth!,
+    const bb = data.latest.bbUpper != null ? {
+        upper: data.latest.bbUpper,
+        middle: data.latest.bbMiddle!,
+        lower: data.latest.bbLower!,
+        bandwidth: data.latest.bbBandwidth!,
     } : null;
 
     return (
         <Container>
             <Header>
                 <Market>{data.market}</Market>
+                <Candle>
+                    свеча {INTERVAL_LABELS[data.interval]} · закрыта{' '}
+                    {closedLabel(data.closedAt, data.interval)}
+                </Candle>
             </Header>
 
             {/* Цена + MA5 + тренд */}
             <StatsGrid>
                 <Stat>
                     <StatLabel>Цена</StatLabel>
-                    <StatValue>${data.currentPrice.toLocaleString()}</StatValue>
+                    <StatValue>${data.price.toLocaleString()}</StatValue>
                 </Stat>
                 <Stat>
                     <StatLabel>MA5</StatLabel>
-                    <StatValue>{fmt(data.movingAverage, '$')}</StatValue>
+                    <StatValue>{fmt(data.ma5, '$')}</StatValue>
                 </Stat>
                 <Stat>
                     <StatLabel>Тренд</StatLabel>

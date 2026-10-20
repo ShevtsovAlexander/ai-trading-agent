@@ -1,12 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import styled from "styled-components";
-import {
-  getPriceHistory,
-  getHistory,
-  getLatest,
-  refreshMarket,
-} from "./api/market";
-import type { PriceSnapshot, MarketSnapshot, MarketState } from "./types/market";
+import { isAxiosError } from "axios";
+import { getCandles, getView } from "./api/market";
+import { INTERVAL_MS } from "./types/market";
+import type { Interval, MarketSeries, MarketView, Range } from "./types/market";
 import { MarketStateCard } from "./components/MarketStateCard";
 import { PriceChart } from "./components/PriceChart";
 import { IndicatorHistoryTable } from "./components/IndicatorHistoryTable";
@@ -18,25 +15,50 @@ const COINS = [
   { id: "solana", label: "SOL", market: "SOL/USDT", color: "#9945FF" },
 ];
 
+// Интервал свечей пока фиксирован; селект — TASK-0004.8
+const INTERVAL: Interval = "5m";
+
 type Tab = "market" | "intel";
 
-export default function App() {
-  const [chartLimit, setChartLimit] = useState(288);
-  const [activeCoin, setActiveCoin] = useState(COINS[0]);
-  const [history, setHistory] = useState<PriceSnapshot[]>([]);
-  const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([]);
-  const [lastSnapshot, setLastSnapshot] = useState<MarketState | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState<Tab>("market");
+// Отказ чтения — три разные причины, три разных текста: «network» — бэкенд
+// не ответил; «binance» — бэкенд жив, но Binance не отдал данные (502);
+// «http» — бэкенд ответил другой ошибкой (400/404/500).
+type LoadError =
+  | { kind: "network" }
+  | { kind: "binance"; message: string }
+  | { kind: "http"; status: number }
+  | null;
 
-  // Два разных отказа — два разных флага, и склеивать их нельзя.
-  // dataError — чтение данных не удалось: на экране может быть не то, что
-  // в бэкенде. actionError — не сработала команда обновления; данные при
-  // этом могут быть свежими, и говорить «данные недоступны» было бы ложью.
-  // Молчаливое console.warn не годится ни для того, ни для другого:
-  // критерий 17 PRD требует, чтобы отказ был виден в интерфейсе.
-  const [dataError, setDataError] = useState(false);
-  const [actionError, setActionError] = useState(false);
+const classify = (e: unknown): LoadError => {
+  if (!isAxiosError(e) || !e.response) return { kind: "network" };
+  const { status, data } = e.response;
+  if (status === 502) {
+    const message =
+      typeof data?.message === "string" ? data.message : "Binance недоступен";
+    return { kind: "binance", message };
+  }
+  return { kind: "http", status };
+};
+
+const errorText = (e: NonNullable<LoadError>): string =>
+  e.kind === "network"
+    ? "Нет связи с бэкендом"
+    : e.kind === "binance"
+      ? e.message
+      : `Бэкенд вернул ошибку (код ${e.status})`;
+
+export default function App() {
+  const [range, setRange] = useState<Range>("24h");
+  const [activeCoin, setActiveCoin] = useState(COINS[0]);
+  const [chart, setChart] = useState<MarketSeries | null>(null);
+  const [view, setView] = useState<MarketView | null>(null);
+  const [tab, setTab] = useState<Tab>("market");
+  // Молчаливое console.warn не годится: отказ должен быть виден в интерфейсе.
+  // Ошибки графика и карточки раздельно: /market/view падает и там, где
+  // свечи есть (502 «Binance не отдал свечей», Groq) — график от этого
+  // гаснуть не должен.
+  const [chartError, setChartError] = useState<LoadError>(null);
+  const [viewError, setViewError] = useState<LoadError>(null);
 
   // Токен запроса: ответ, приехавший после смены монеты, диапазона или
   // после следующего опроса, в состояние не попадает. Без него поздний
@@ -46,57 +68,50 @@ export default function App() {
 
   const load = useCallback(async () => {
     const token = ++requestRef.current;
-    try {
-      const [h, d, s] = await Promise.all([
-        getPriceHistory(activeCoin.id, chartLimit),
-        getHistory(activeCoin.id, chartLimit),
-        getLatest(activeCoin.id),
-      ]);
-      if (token !== requestRef.current) return; // приехало поздно
-      setHistory([...h].reverse());
-      setSnapshots(d);
-      // Карточка — из /market/snapshot, а не d[0] истории: строка истории
-      // приходит без aiComment, и секция «AI» была бы пуста всегда.
-      // null, а не «оставить прошлое»: у монеты без истории карточка иначе
-      // показывала бы данные предыдущей монеты, без ошибки и без баннера.
-      setLastSnapshot(s);
-      setDataError(false);
-    } catch (e) {
-      if (token !== requestRef.current) return;
-      console.warn("[dashboard] обновление данных не удалось:", e);
-      setDataError(true);
-    }
-  }, [activeCoin.id, chartLimit]);
+    const [c, v] = await Promise.allSettled([
+      getCandles(activeCoin.id, INTERVAL, range),
+      getView(activeCoin.id, INTERVAL),
+    ]);
+    if (token !== requestRef.current) return; // приехало поздно
 
-  const handleRefresh = async () => {
-    setLoading(true);
-    try {
-      await refreshMarket({
-        market: activeCoin.market,
-        coinId: activeCoin.id,
-      });
-      setActionError(false);
-    } catch (e) {
-      console.warn("[dashboard] обновление по кнопке не удалось:", e);
-      setActionError(true);
-    } finally {
-      setLoading(false);
+    if (c.status === "fulfilled") {
+      setChart(c.value);
+      setChartError(null);
+    } else {
+      console.warn("[dashboard] свечи не загрузились:", c.reason);
+      setChartError(classify(c.reason));
     }
-
-    // Перечитываем данные независимо от исхода команды, и флаг данных
-    // ставит именно load(): упавший POST при живых GET не должен выдавать
-    // «данные недоступны».
-    await load();
-  };
+    if (v.status === "fulfilled") {
+      setView(v.value);
+      setViewError(null);
+    } else {
+      console.warn("[dashboard] карточка не загрузилась:", v.reason);
+      setViewError(classify(v.reason));
+    }
+  }, [activeCoin.id, range]);
 
   useEffect(() => {
     // Первая загрузка — из микротаски, а не прямым вызовом в теле эффекта:
     // setState внутри load() иначе попадает в тот же коммит и даёт каскадный
     // ререндер (react-hooks/set-state-in-effect). Семантика та же.
     Promise.resolve().then(load);
-    const interval = setInterval(load, 5 * 60 * 1000 + 10000);
-    return () => clearInterval(interval);
+    // Опрос раз в min(интервал, 5 мин) + 10 с (план, trade-off 9). Таймер
+    // не выровнен по закрытию свечи — отставание экрана от 0 до периода
+    const poll = setInterval(
+      load,
+      Math.min(INTERVAL_MS[INTERVAL], 5 * 60 * 1000) + 10000,
+    );
+    return () => clearInterval(poll);
   }, [load]);
+
+  // Данные показываются, только если они про текущую монету и диапазон:
+  // после смены монеты и отказа бэкенда под баннером иначе висели бы цены
+  // прошлой монеты. Пока идёт запрос после переключения — блок пуст.
+  const chartShown =
+    chart && chart.coinId === activeCoin.id && chart.range === range
+      ? chart
+      : null;
+  const viewShown = view && view.coinId === activeCoin.id ? view : null;
 
   return (
     <Wrapper>
@@ -136,36 +151,37 @@ export default function App() {
         </Header>
 
         <TabPanel $active={tab === "market"}>
-          {dataError && (
+          {chartError && (
             <ErrorBanner>
-              ⚠ Нет связи с бэкендом. Данные на экране могут быть устаревшими
-              или отсутствовать.
+              ⚠ {errorText(chartError)}. Данные на экране могут быть
+              устаревшими или отсутствовать.
             </ErrorBanner>
           )}
 
           <TopRow>
             <PriceChart
-              history={history}
-              snapshots={snapshots}
+              data={chartShown}
               coin={activeCoin}
-              onRangeChange={setChartLimit}
+              interval={INTERVAL}
+              range={range}
+              onRangeChange={setRange}
             />
           </TopRow>
 
           <BottomRow>
             <Left>
-              {lastSnapshot && <MarketStateCard data={lastSnapshot} />}
-              <RefreshBtn onClick={handleRefresh} disabled={loading}>
-                {loading ? "Обновляю..." : "Обновить данные"}
-              </RefreshBtn>
-              {actionError && (
-                <ActionError>
-                  Не удалось обновить данные — бэкенд отказал. Данные ниже
-                  могли не обновиться.
-                </ActionError>
+              {/* При упавшем графике причину уже назвал баннер */}
+              {viewError && !chartError && (
+                <CardError>
+                  Карточка не обновилась: {errorText(viewError)}.
+                </CardError>
               )}
+              {viewShown && <MarketStateCard data={viewShown} />}
             </Left>
-            <IndicatorHistoryTable snapshots={snapshots} />
+            <IndicatorHistoryTable
+              coinId={activeCoin.id}
+              series={chartShown?.series ?? []}
+            />
           </BottomRow>
         </TabPanel>
 
@@ -265,7 +281,7 @@ const ErrorBanner = styled.div`
   font-size: ${({ theme }) => theme.fontSize.md};
 `;
 
-const ActionError = styled.div`
+const CardError = styled.div`
   color: ${({ theme }) => theme.colors.amber};
   font-size: ${({ theme }) => theme.fontSize.md};
 `;
@@ -285,22 +301,4 @@ const Left = styled.div`
   display: flex;
   flex-direction: column;
   gap: 12px;
-`;
-
-const RefreshBtn = styled.button<{ disabled: boolean }>`
-  width: 100%;
-  padding: 12px;
-  border-radius: ${({ theme }) => theme.radius.lg};
-  border: none;
-  background: ${({ disabled, theme }) =>
-    disabled ? theme.colors.border : theme.colors.purple};
-  color: #fff;
-  font-weight: 600;
-  font-size: ${({ theme }) => theme.fontSize.base};
-  cursor: ${({ disabled }) => (disabled ? "not-allowed" : "pointer")};
-  transition: opacity 0.15s;
-
-  &:hover:not(:disabled) {
-    opacity: 0.9;
-  }
 `;

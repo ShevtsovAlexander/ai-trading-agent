@@ -8,10 +8,8 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import type { PriceSnapshot, MarketSnapshot } from "../types/market";
-import { useState } from "react";
-
-type ChartRange = "1h" | "4h" | "12h" | "24h" | "2w" | "1m" | "3m";
+import { INTERVAL_MS, RANGE_MS, isAllowed } from "../types/market";
+import type { Interval, MarketSeries, Range } from "../types/market";
 
 interface Coin {
   id: string;
@@ -20,26 +18,26 @@ interface Coin {
   color: string;
 }
 
+// data — свечи диапазона и ряды индикаторов от бэкенда; null — данных для
+// текущей монеты и диапазона ещё (или уже) нет. Диапазон хранит App: по нему
+// идёт запрос, и вкладка не должна расходиться с тем, что нарисовано.
 interface Props {
-  history: PriceSnapshot[];
-  snapshots: MarketSnapshot[];
+  data: MarketSeries | null;
   coin: Coin;
-  onRangeChange: (limit: number) => void;
+  interval: Interval;
+  range: Range;
+  onRangeChange: (range: Range) => void;
 }
 
-const HOUR_MS = 60 * 60 * 1000;
-
-// limit — сколько строк просить у бэкенда (шаг крона 5 мин), ms — окно
-// по времени, которое показывает ось. Строки выбираются по количеству, и
-// после паузы бэкенда в них попадают дни до неё — окно их отсекает.
-const RANGES: { label: string; value: ChartRange; limit: number; ms: number }[] = [
-  { label: "1ч", value: "1h", limit: 12, ms: HOUR_MS },
-  { label: "4ч", value: "4h", limit: 48, ms: 4 * HOUR_MS },
-  { label: "12ч", value: "12h", limit: 144, ms: 12 * HOUR_MS },
-  { label: "24ч", value: "24h", limit: 288, ms: 24 * HOUR_MS },
-  { label: "2нед", value: "2w", limit: 4032, ms: 14 * 24 * HOUR_MS },
-  { label: "1мес", value: "1m", limit: 8640, ms: 30 * 24 * HOUR_MS },
-  { label: "3мес", value: "3m", limit: 25920, ms: 90 * 24 * HOUR_MS },
+const RANGES: { label: string; value: Range }[] = [
+  { label: "1ч", value: "1h" },
+  { label: "4ч", value: "4h" },
+  { label: "12ч", value: "12h" },
+  { label: "24ч", value: "24h" },
+  { label: "2нед", value: "2w" },
+  { label: "1мес", value: "1m" },
+  { label: "3мес", value: "3m" },
+  { label: "1г", value: "1y" },
 ];
 
 const Container = styled.div`
@@ -114,41 +112,19 @@ const RangeBtn = styled.button<{ active: boolean }>`
     active ? theme.colors.purple : theme.colors.textMuted};
   cursor: pointer;
   transition: all 0.15s;
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
 `;
-
-/**
- * Матчим каждый PriceSnapshot к ближайшему MarketSnapshot по времени (±5 мин).
- * Прямой матч по createdAt ненадёжен — timestamps разные.
- */
-const matchSnapshots = (
-  history: PriceSnapshot[],
-  snapshots: MarketSnapshot[]
-): (PriceSnapshot & { snapshot: MarketSnapshot | null })[] => {
-  if (!snapshots.length) return history.map((h) => ({ ...h, snapshot: null }));
-
-  return history.map((h) => {
-    const hTime = new Date(h.createdAt).getTime();
-    let closest: MarketSnapshot | null = null;
-    let minDiff = 5 * 60 * 1000; // 5 минут — макс окно
-
-    for (const s of snapshots) {
-      const diff = Math.abs(new Date(s.createdAt).getTime() - hTime);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closest = s;
-      }
-    }
-
-    return { ...h, snapshot: closest };
-  });
-};
 
 // --- tooltip ---
 
-// Точка графика: снимок цены плюс подмешанные индикаторы из снимка рынка.
-// Типизирована явно, чтобы тултип не ходил через any — recharts отдаёт
-// элемент данных в payload[n].payload как есть.
-// Пустая точка-разрыв (см. GAP_MS) — все поля, кроме t, null.
+// Точка графика: закрытая свеча (t — время открытия) плюс индикаторы на её
+// закрытии. Типизирована явно, чтобы тултип не ходил через any — recharts
+// отдаёт элемент данных в payload[n].payload как есть.
+// Пустая точка-разрыв (см. gapMs) — все поля, кроме t, null.
 interface ChartPoint {
   t: number;
   price: number | null;
@@ -211,57 +187,43 @@ const getTickFormatter = (withDate: boolean) => (v: number) => {
   return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 };
 
-// Дыра между соседними точками длиннее 3 шагов крона — бэкенд не писал
-// цены. Вставляем пустую точку, чтобы все серии рвались, а не тянули
-// прямую через пропуск.
-const GAP_MS = 15 * 60 * 1000;
+// Дыра между соседними свечами длиннее 3 интервалов — Binance не отдал
+// свечи (остановка биржи). Вставляем пустую точку, чтобы все серии рвались,
+// а не тянули прямую через пропуск.
+const GAP_INTERVALS = 3;
 
 // --- component ---
 
 export const PriceChart = ({
-  history,
-  snapshots,
+  data: series,
   coin,
+  interval,
+  range,
   onRangeChange,
 }: Props) => {
-  const [activeRange, setActiveRange] = useState<ChartRange>("24h");
+  // Бэкенд отдаёт ровно свечи диапазона, series[i].t === candles[i].t —
+  // окно и сопоставление по времени не нужны
+  const points: ChartPoint[] = (series?.candles ?? []).map((c, i) => {
+    const s = series!.series[i];
+    return {
+      t: c.t,
+      price: c.close,
+      ema9: s.ema9,
+      ema21: s.ema21,
+      bbUpper: s.bbUpper,
+      bbLower: s.bbLower,
+      // Полоса BB для Area: [низ, верх]. Без одной из границ — null, а не
+      // [null, null]: точка без BB полосы не рисует
+      bbRange:
+        s.bbLower != null && s.bbUpper != null ? [s.bbLower, s.bbUpper] : null,
+    };
+  });
 
-  const handleRange = (r: (typeof RANGES)[0]) => {
-    setActiveRange(r.value);
-    onRangeChange(r.limit);
-  };
-
-  const matched = matchSnapshots(history, snapshots);
-
-  // Окно вкладки — от последней точки назад на её длину. Ось начинается с
-  // первой точки в окне, а не с края окна: где истории ещё нет, рисовать
-  // нечего, а пропуски внутри данных остаются видны разрывами
-  const windowMs = RANGES.find((r) => r.value === activeRange)!.ms;
-  const end = matched.length
-    ? Date.parse(matched[matched.length - 1].createdAt)
-    : 0;
-  const start = end - windowMs;
-
-  const allPoints: ChartPoint[] = matched.map((h) => ({
-    t: Date.parse(h.createdAt),
-    price: h.price,
-    ema9: h.snapshot?.ema9 ?? null,
-    ema21: h.snapshot?.ema21 ?? null,
-    bbUpper: h.snapshot?.bbUpper ?? null,
-    bbLower: h.snapshot?.bbLower ?? null,
-    // Полоса BB для Area: [низ, верх]. Без одной из границ — null, а не
-    // [null, null]: снимок без BB (истории < 20 точек) полосы не рисует
-    bbRange:
-      h.snapshot?.bbLower != null && h.snapshot?.bbUpper != null
-        ? [h.snapshot.bbLower, h.snapshot.bbUpper]
-        : null,
-  }));
-  const points = allPoints.filter((p) => p.t >= start);
-
+  const gapMs = GAP_INTERVALS * INTERVAL_MS[interval];
   const data: ChartPoint[] = [];
   for (const p of points) {
     const prev = data[data.length - 1];
-    if (prev && p.t - prev.t > GAP_MS) {
+    if (prev && p.t - prev.t > gapMs) {
       data.push({
         t: (prev.t + p.t) / 2,
         price: null,
@@ -276,7 +238,7 @@ export const PriceChart = ({
   }
 
   // Дата в подписях и тултипе — на окнах длиннее суток
-  const withDate = windowMs > 24 * HOUR_MS;
+  const withDate = RANGE_MS[range] > RANGE_MS["24h"];
   // Подписи оси — только на реальных точках: точка-разрыв посреди дыры
   // подписала бы дату, в которую данных нет
   const ticks = points.map((p) => p.t);
@@ -284,8 +246,8 @@ export const PriceChart = ({
   // Домен Y — по цене и границам BB с отступом 0.1%. Обрезать серии recharts
   // и так не даст: при allowDataOverflow=false он расширяет заданный домен до
   // данных. Здесь — отступ от краёв и пустая история без Infinity. Цикл, а не
-  // Math.min(...arr): на 3мес до ~78 тыс. значений — больше лимита
-  // аргументов в Safari.
+  // Math.min(...arr): до 5000 свечей × 3 значения — у лимита аргументов
+  // в Safari.
   let min = Infinity;
   let max = -Infinity;
   for (const d of data) {
@@ -306,8 +268,16 @@ export const PriceChart = ({
           {RANGES.map((r) => (
             <RangeBtn
               key={r.value}
-              active={activeRange === r.value}
-              onClick={() => handleRange(r)}
+              active={range === r.value}
+              // Больше MAX_CANDLES свечей на интервале — бэкенд ответит 400;
+              // кнопка гаснет заранее (3мес на 5м — 25 920 свечей)
+              disabled={!isAllowed(r.value, interval)}
+              title={
+                isAllowed(r.value, interval)
+                  ? undefined
+                  : "Слишком много свечей для этого интервала"
+              }
+              onClick={() => onRangeChange(r.value)}
             >
               {r.label}
             </RangeBtn>

@@ -1,9 +1,13 @@
 import styled from "styled-components";
-import type { MarketSnapshot } from "../types/market";
+import type { SeriesPoint } from "../types/market";
 
+// series — ряды индикаторов текущего графика (свечи интервала)
 interface Props {
-  snapshots: MarketSnapshot[];
+  coinId: string;
+  series: SeriesPoint[];
 }
+
+const ROWS = 50;
 
 const COIN_LABELS: Record<string, string> = {
   bitcoin: "BTC",
@@ -115,14 +119,24 @@ const rsiColor = (rsi: number | null): string | undefined => {
   return undefined;
 };
 
-const formatTime = (iso: string): string => {
-  const d = new Date(iso);
-  return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-};
+// Время открытия свечи, как в тултипе графика. Дата — если строки
+// захватывают больше одних суток: иначе 23:55 и 00:00 не отличить.
+const formatTime = (t: number, withDate: boolean): string =>
+  new Date(t).toLocaleString("ru-RU", {
+    ...(withDate && { day: "numeric", month: "short" }),
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
 // --- component ---
 
-export const IndicatorHistoryTable = ({ snapshots }: Props) => {
+export const IndicatorHistoryTable = ({ coinId, series }: Props) => {
+  const rows = series.slice(-ROWS).reverse(); // новые сверху
+  const withDate =
+    rows.length > 0 &&
+    new Date(rows[0].t).toDateString() !==
+      new Date(rows[rows.length - 1].t).toDateString();
+
   return (
     <Container>
       <Inner>
@@ -135,22 +149,22 @@ export const IndicatorHistoryTable = ({ snapshots }: Props) => {
             <Th>Время</Th>
           </HeadRow>
 
-          {snapshots.length === 0 && <Empty>Нет данных</Empty>}
+          {rows.length === 0 && <Empty>Нет данных</Empty>}
 
-          {snapshots.map((d) => (
-            <Row key={d.id}>
+          {rows.map((d) => (
+            <Row key={d.t}>
               <CoinCell>
-                <Dot color={COIN_COLORS[d.coinId] ?? "#888"} />
-                {COIN_LABELS[d.coinId] ?? d.coinId.toUpperCase()}
+                <Dot color={COIN_COLORS[coinId] ?? "#888"} />
+                {COIN_LABELS[coinId] ?? coinId.toUpperCase()}
               </CoinCell>
 
-              <Td>${d.currentPrice.toLocaleString()}</Td>
+              <Td>${d.close.toLocaleString()}</Td>
 
               <TdColored color={rsiColor(d.rsi)}>
                 {d.rsi != null ? d.rsi.toFixed(1) : "—"}
               </TdColored>
 
-              <Td>{formatTime(d.createdAt)}</Td>
+              <Td>{formatTime(d.t, withDate)}</Td>
             </Row>
           ))}
         </Table>
