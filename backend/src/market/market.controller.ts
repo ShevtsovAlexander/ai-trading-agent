@@ -23,13 +23,15 @@ export class MarketController {
     return this.marketData.getSeries(coinId, interval, range);
   }
 
-  // Последняя закрытая свеча интервала; aiComment — null до TASK-0004.5
+  // Последняя закрытая свеча интервала + AI-комментарий к ней (кэш по
+  // монете и интервалу; отказ модели → прошлый комментарий или null)
   @Get('view/:coinId')
-  getView(
+  async getView(
     @Param('coinId') coinId: string,
     @Query('interval') interval: string,
   ) {
-    return this.marketData.getView(coinId, interval);
+    const view = await this.marketData.getView(coinId, interval);
+    return { ...view, aiComment: await this.marketComment.describeView(view) };
   }
 
   @Post('refresh')
