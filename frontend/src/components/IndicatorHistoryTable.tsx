@@ -1,9 +1,11 @@
 import styled from "styled-components";
-import type { SeriesPoint } from "../types/market";
+import type { Interval, SeriesPoint } from "../types/market";
+import { formatCandleTime } from "../utils/candleTime";
 
 // series — ряды индикаторов текущего графика (свечи интервала)
 interface Props {
   coinId: string;
+  interval: Interval;
   series: SeriesPoint[];
 }
 
@@ -119,19 +121,13 @@ const rsiColor = (rsi: number | null): string | undefined => {
   return undefined;
 };
 
-// Время открытия свечи, как в тултипе графика. Дата — если строки
-// захватывают больше одних суток: иначе 23:55 и 00:00 не отличить.
-const formatTime = (t: number, withDate: boolean): string =>
-  new Date(t).toLocaleString("ru-RU", {
-    ...(withDate && { day: "numeric", month: "short" }),
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 
 // --- component ---
 
-export const IndicatorHistoryTable = ({ coinId, series }: Props) => {
+export const IndicatorHistoryTable = ({ coinId, interval, series }: Props) => {
   const rows = series.slice(-ROWS).reverse(); // новые сверху
+  // Время открытия свечи, как в тултипе графика. Дата — если строки
+  // захватывают больше одних суток: иначе 23:55 и 00:00 не отличить
   const withDate =
     rows.length > 0 &&
     new Date(rows[0].t).toDateString() !==
@@ -164,7 +160,7 @@ export const IndicatorHistoryTable = ({ coinId, series }: Props) => {
                 {d.rsi != null ? d.rsi.toFixed(1) : "—"}
               </TdColored>
 
-              <Td>{formatTime(d.t, withDate)}</Td>
+              <Td>{formatCandleTime(d.t, interval, withDate)}</Td>
             </Row>
           ))}
         </Table>

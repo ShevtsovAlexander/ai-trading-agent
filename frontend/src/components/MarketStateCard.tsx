@@ -1,19 +1,11 @@
 import styled from 'styled-components';
-import { INTERVAL_MS } from '../types/market';
+import { INTERVAL_LABELS, INTERVAL_MS } from '../types/market';
+import { formatCandleTime } from '../utils/candleTime';
 import type { Interval, MarketView } from '../types/market';
 
 interface Props {
     data: MarketView;
 }
-
-const INTERVAL_LABELS: Record<Interval, string> = {
-    '1m': '1м',
-    '5m': '5м',
-    '15m': '15м',
-    '1h': '1ч',
-    '4h': '4ч',
-    '1d': '1д',
-};
 
 const TREND_LABELS = {
     up: '↑ Рост',
@@ -106,18 +98,19 @@ const macdColor = (histogram: number | null) => {
     return histogram > 0 ? '#4ade80' : '#f87171';
 };
 
-// Время закрытия свечи: closedAt — последняя миллисекунда, +1 даёт ровную
-// границу (18:20, а не 18:19). Дата — для свечей от часа: закрытие может
-// быть не сегодня.
-const closedLabel = (closedAt: number, interval: Interval) =>
-    new Date(closedAt + 1).toLocaleString('ru-RU', {
-        ...(INTERVAL_MS[interval] >= INTERVAL_MS['1h'] && {
-            day: 'numeric',
-            month: 'short',
-        }),
+// Свеча — от открытия до закрытия: closedAt — последняя миллисекунда, +1
+// даёт ровную границу. Подпись открытия — та же, что в тултипе и таблице;
+// дневная свеча — одной датой.
+const candleLabel = (closedAt: number, interval: Interval) => {
+    const open = closedAt + 1 - INTERVAL_MS[interval];
+    if (interval === '1d') return formatCandleTime(open, interval, true);
+    const withDate = INTERVAL_MS[interval] >= INTERVAL_MS['1h'];
+    const close = new Date(closedAt + 1).toLocaleTimeString('ru-RU', {
         hour: '2-digit',
         minute: '2-digit',
     });
+    return `${formatCandleTime(open, interval, withDate)}–${close}`;
+};
 
 // --- component ---
 
@@ -143,8 +136,8 @@ export const MarketStateCard = ({ data }: Props) => {
             <Header>
                 <Market>{data.market}</Market>
                 <Candle>
-                    свеча {INTERVAL_LABELS[data.interval]} · закрыта{' '}
-                    {closedLabel(data.closedAt, data.interval)}
+                    свеча {INTERVAL_LABELS[data.interval]} ·{' '}
+                    {candleLabel(data.closedAt, data.interval)}
                 </Candle>
             </Header>
 

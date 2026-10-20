@@ -41,6 +41,37 @@ export const isAllowed = (range: Range, interval: Interval): boolean => {
     return count >= MIN_CANDLES && count <= MAX_CANDLES;
 };
 
+export const INTERVAL_LABELS: Record<Interval, string> = {
+    '1m': '1м',
+    '5m': '5м',
+    '15m': '15м',
+    '1h': '1ч',
+    '4h': '4ч',
+    '1d': '1д',
+};
+
+// Диапазоны по возрастанию длины — порядок вкладок графика
+export const RANGE_ORDER: Range[] = ['1h', '4h', '12h', '24h', '2w', '1m', '3m', '1y'];
+
+// Диапазон после смены интервала: допустимый — остаётся; иначе — ближайший
+// по порядку допустимый. Допустимые для интервала идут сплошным отрезком
+// RANGE_ORDER, недопустимый лежит по одну его сторону — ничьих нет
+// (24ч на 1д → 2нед, 3мес на 5м → 2нед, 1г на 1м → 24ч).
+export const nearestAllowed = (range: Range, interval: Interval): Range => {
+    if (isAllowed(range, interval)) return range;
+    const from = RANGE_ORDER.indexOf(range);
+    let best = range;
+    let bestDist = Infinity;
+    RANGE_ORDER.forEach((r, i) => {
+        const dist = Math.abs(i - from);
+        if (isAllowed(r, interval) && dist < bestDist) {
+            best = r;
+            bestDist = dist;
+        }
+    });
+    return best;
+};
+
 // t — время открытия свечи (openTime, мс)
 export interface Candle {
     t: number;

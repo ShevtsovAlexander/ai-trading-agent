@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import styled from "styled-components";
 import { isAxiosError } from "axios";
 import { getCandles, getView } from "./api/market";
-import { INTERVAL_MS } from "./types/market";
+import { INTERVAL_MS, nearestAllowed } from "./types/market";
 import type { Interval, MarketSeries, MarketView, Range } from "./types/market";
 import { MarketStateCard } from "./components/MarketStateCard";
 import { PriceChart } from "./components/PriceChart";
@@ -14,9 +14,6 @@ const COINS = [
   { id: "ethereum", label: "ETH", market: "ETH/USDT", color: "#627EEA" },
   { id: "solana", label: "SOL", market: "SOL/USDT", color: "#9945FF" },
 ];
-
-// Интервал свечей пока фиксирован; селект — TASK-0004.8
-const INTERVAL: Interval = "5m";
 
 type Tab = "market" | "intel";
 
@@ -49,6 +46,7 @@ const errorText = (e: NonNullable<LoadError>): string =>
 
 export default function App() {
   const [range, setRange] = useState<Range>("24h");
+  const [interval, setCandleInterval] = useState<Interval>("5m");
   const [activeCoin, setActiveCoin] = useState(COINS[0]);
   const [chart, setChart] = useState<MarketSeries | null>(null);
   const [view, setView] = useState<MarketView | null>(null);
@@ -69,8 +67,8 @@ export default function App() {
   const load = useCallback(async () => {
     const token = ++requestRef.current;
     const [c, v] = await Promise.allSettled([
-      getCandles(activeCoin.id, INTERVAL, range),
-      getView(activeCoin.id, INTERVAL),
+      getCandles(activeCoin.id, interval, range),
+      getView(activeCoin.id, interval),
     ]);
     if (token !== requestRef.current) return; // приехало поздно
 
@@ -88,7 +86,14 @@ export default function App() {
       console.warn("[dashboard] карточка не загрузилась:", v.reason);
       setViewError(classify(v.reason));
     }
-  }, [activeCoin.id, range]);
+  }, [activeCoin.id, interval, range]);
+
+  // Интервал и диапазон — одним обработчиком: React сводит оба setState в
+  // один рендер, и недопустимая промежуточная пара на бэкенд не уходит (400)
+  const changeInterval = (next: Interval) => {
+    setCandleInterval(next);
+    setRange(nearestAllowed(range, next));
+  };
 
   useEffect(() => {
     // Первая загрузка — из микротаски, а не прямым вызовом в теле эффекта:
@@ -99,19 +104,25 @@ export default function App() {
     // не выровнен по закрытию свечи — отставание экрана от 0 до периода
     const poll = setInterval(
       load,
-      Math.min(INTERVAL_MS[INTERVAL], 5 * 60 * 1000) + 10000,
+      Math.min(INTERVAL_MS[interval], 5 * 60 * 1000) + 10000,
     );
     return () => clearInterval(poll);
-  }, [load]);
+  }, [load, interval]);
 
-  // Данные показываются, только если они про текущую монету и диапазон:
-  // после смены монеты и отказа бэкенда под баннером иначе висели бы цены
-  // прошлой монеты. Пока идёт запрос после переключения — блок пуст.
+  // Данные показываются, только если они про текущие монету, интервал и
+  // диапазон: после переключения и отказа бэкенда под баннером иначе висели
+  // бы чужие цены. Пока идёт запрос после переключения — блок пуст.
   const chartShown =
-    chart && chart.coinId === activeCoin.id && chart.range === range
+    chart &&
+    chart.coinId === activeCoin.id &&
+    chart.interval === interval &&
+    chart.range === range
       ? chart
       : null;
-  const viewShown = view && view.coinId === activeCoin.id ? view : null;
+  const viewShown =
+    view && view.coinId === activeCoin.id && view.interval === interval
+      ? view
+      : null;
 
   return (
     <Wrapper>
@@ -162,9 +173,10 @@ export default function App() {
             <PriceChart
               data={chartShown}
               coin={activeCoin}
-              interval={INTERVAL}
+              interval={interval}
               range={range}
               onRangeChange={setRange}
+              onIntervalChange={changeInterval}
             />
           </TopRow>
 
@@ -180,6 +192,7 @@ export default function App() {
             </Left>
             <IndicatorHistoryTable
               coinId={activeCoin.id}
+              interval={interval}
               series={chartShown?.series ?? []}
             />
           </BottomRow>

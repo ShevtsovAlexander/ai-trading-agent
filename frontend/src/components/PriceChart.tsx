@@ -8,8 +8,9 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { INTERVAL_MS, RANGE_MS, isAllowed } from "../types/market";
+import { INTERVAL_LABELS, INTERVAL_MS, RANGE_MS, isAllowed } from "../types/market";
 import type { Interval, MarketSeries, Range } from "../types/market";
+import { formatCandleTime } from "../utils/candleTime";
 
 interface Coin {
   id: string;
@@ -27,7 +28,10 @@ interface Props {
   interval: Interval;
   range: Range;
   onRangeChange: (range: Range) => void;
+  onIntervalChange: (interval: Interval) => void;
 }
+
+const INTERVALS: Interval[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
 const RANGES: { label: string; value: Range }[] = [
   { label: "1ч", value: "1h" },
@@ -99,6 +103,25 @@ const RangeTabs = styled.div`
   gap: 4px;
 `;
 
+// Интервалы и диапазоны — два ряда кнопок одного вида через разделитель
+const Selectors = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+`;
+
+// Подписи рядов: «1ч» и «4ч» есть и среди свечей, и среди периодов
+const SelectorLabel = styled.span`
+  font-size: ${({ theme }) => theme.fontSize.xs};
+  color: ${({ theme }) => theme.colors.textMuted};
+`;
+
+const Separator = styled.span`
+  width: 1px;
+  height: 14px;
+  background: ${({ theme }) => theme.colors.border};
+`;
+
 const RangeBtn = styled.button<{ active: boolean }>`
   padding: 2px 8px;
   border-radius: ${({ theme }) => theme.radius.sm};
@@ -144,7 +167,8 @@ const CustomTooltip = ({
   active,
   payload,
   withDate,
-}: TooltipProps & { withDate: boolean }) => {
+  interval,
+}: TooltipProps & { withDate: boolean; interval: Interval }) => {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   // На точке-разрыве показывать нечего
@@ -153,11 +177,7 @@ const CustomTooltip = ({
   return (
     <TooltipContainer>
       <div style={{ color: "#888", marginBottom: 4 }}>
-        {new Date(d.t).toLocaleString("ru-RU", {
-          ...(withDate && { day: "numeric", month: "short" }),
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
+        {formatCandleTime(d.t, interval, withDate)}
       </div>
       <div style={{ color: "#fff", fontWeight: 500 }}>
         ${d.price.toLocaleString()}
@@ -200,6 +220,7 @@ export const PriceChart = ({
   interval,
   range,
   onRangeChange,
+  onIntervalChange,
 }: Props) => {
   // Бэкенд отдаёт ровно свечи диапазона, series[i].t === candles[i].t —
   // окно и сопоставление по времени не нужны
@@ -264,6 +285,21 @@ export const PriceChart = ({
     <Container>
       <Controls>
         <Title>{coin.market} — цена / EMA / BB</Title>
+        <Selectors>
+          <SelectorLabel>свеча</SelectorLabel>
+          <RangeTabs>
+            {INTERVALS.map((iv) => (
+              <RangeBtn
+                key={iv}
+                active={interval === iv}
+                onClick={() => onIntervalChange(iv)}
+              >
+                {INTERVAL_LABELS[iv]}
+              </RangeBtn>
+            ))}
+          </RangeTabs>
+          <Separator />
+          <SelectorLabel>период</SelectorLabel>
         <RangeTabs>
           {RANGES.map((r) => (
             <RangeBtn
@@ -283,6 +319,7 @@ export const PriceChart = ({
             </RangeBtn>
           ))}
         </RangeTabs>
+        </Selectors>
       </Controls>
 
       <Legend>
@@ -327,7 +364,7 @@ export const PriceChart = ({
             width={75}
           />
           <Tooltip
-            content={<CustomTooltip withDate={withDate} />}
+            content={<CustomTooltip withDate={withDate} interval={interval} />}
           />
           {/* Полоса BB: Area по [bbLower, bbUpper] заливает между границами
               и обводит обе (range area recharts) */}
