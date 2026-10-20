@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { MarketModule } from './market/market.module';
-import { PriceModule } from './price/price.module';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -15,7 +14,6 @@ import { NewsModule } from './news/news.module';
     ScheduleModule.forRoot(),
     PrismaModule,
     MarketModule,
-    PriceModule,
     BacktestModule,
     NewsModule,
   ],

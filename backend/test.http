@@ -1,22 +1,3 @@
-POST http://localhost:3000/market/refresh
-Content-Type: application/json
-
-{
-  "market": "BTC/USDT",
-  "coinId": "bitcoin"
-}
-
-###
-
-GET http://localhost:3000/market/snapshot/bitcoin
-
-###
-
-GET http://localhost:3000/market/history/bitcoin?limit=10
-
-
-###
-
 # Свечи + ряды индикаторов: 24ч на 5м — 288 свечей
 GET http://localhost:3000/market/candles/bitcoin?interval=5m&range=24h
 

@@ -335,7 +335,8 @@ export class BacktestService {
     return result;
   }
 
-  // Тренд по последним points свечам — идентично getTrend в price.service.ts.
+  // Тренд по последним points свечам — то же правило, что calcTrend в
+  // indicators/indicators.ts (перенос удалённого PriceService.getTrend).
   private calcTrend(
     closes: number[],
     i: number,

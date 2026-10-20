@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { MarketSnapshot } from '@prisma/client';
 import { AiService } from '../ai/ai.service';
 import { Interval, MarketView } from './market.types';
 
@@ -17,8 +16,8 @@ const INTERVAL_LABEL: Record<Interval, string> = {
 export class MarketComment {
   private readonly logger = new Logger(MarketComment.name);
 
-  // Кэш по монете (describe) и по монете+интервалу (describeView, ключ
-  // `coinId|interval`): факты не изменились → не гоняем Groq.
+  // Кэш по монете и интервалу (ключ `coinId|interval`): факты не
+  // изменились → не гоняем Groq.
   // Хеш считается от тех же полей, что уходят в промпт — иначе кэш
   // промахивался бы на изменениях, которых модель всё равно не видит.
   private readonly cache = new Map<string, { hash: string; comment: string }>();
@@ -51,15 +50,6 @@ export class MarketComment {
     'периоде длиннее и о том, чего нет в данных.';
 
   constructor(private readonly ai: AiService) {}
-
-  describe(snapshot: MarketSnapshot): Promise<string | null> {
-    return this.generate(
-      snapshot.coinId,
-      () => this.hashFacts(snapshot),
-      () => this.buildPrompt(snapshot),
-      MarketComment.SYSTEM,
-    );
-  }
 
   // Комментарий к последней закрытой свече интервала: в промпте интервал и
   // 5 последних значений, чтобы динамика бралась из данных, а не из догадок.
@@ -104,18 +94,6 @@ export class MarketComment {
       this.logger.warn(`Комментарий не сгенерён (${key}): ${String(e)}`);
       return cached?.comment ?? null; // fallback на прошлый
     }
-  }
-
-  private buildPrompt(s: MarketSnapshot): string {
-    return `Опиши обстановку на рынке ${s.market}.
-
-Цена: $${s.currentPrice}
-Тренд: ${s.trend}
-RSI: ${this.fmt(s.rsi)}
-EMA9: ${this.fmt(s.ema9)}
-EMA21: ${this.fmt(s.ema21)}
-MACD histogram: ${this.fmt(s.macdHistogram)}
-Ширина полос Боллинджера: ${this.fmt(s.bbBandwidth)}%`;
   }
 
   // По строке на индикатор: ряд слева направо от старой свечи к последней
@@ -179,23 +157,9 @@ ${row(
     return 'без изменений';
   }
 
-  // Поля снимка nullable: индикаторы возвращают null, пока истории мало
+  // Значения ряда nullable: периоду индикатора не хватило свечей
   private fmt(value: number | null): string {
     return value === null ? 'нет данных' : String(value);
-  }
-
-  private hashFacts(s: MarketSnapshot): string {
-    const facts = [
-      s.market,
-      s.currentPrice,
-      s.trend,
-      s.rsi,
-      s.ema9,
-      s.ema21,
-      s.macdHistogram,
-      s.bbBandwidth,
-    ].join('|');
-    return createHash('sha1').update(facts).digest('hex');
   }
 
   // Те же факты, что в buildViewPrompt
