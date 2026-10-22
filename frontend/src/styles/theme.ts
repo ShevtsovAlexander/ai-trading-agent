@@ -26,26 +26,7 @@ const palette = {
 };
 
 export const theme = {
-    colors: {
-        ...palette,
-        // Старые токены — до перевода компонентов (TASK-0003.8)
-        bg: '#0d0d0d',
-        surface: '#1a1a1a',
-        surfaceAlt: '#111',
-        border: '#2a2a2a',
-        borderLight: '#1f1f1f',
-        text: '#ffffff',
-        textSecondary: '#888',
-        textMuted: '#555',
-        purple: '#a78bfa',
-        green: '#4ade80',
-        red: '#f87171',
-        amber: '#f59e0b',
-        blue: '#378ADD',
-        btc: '#F7931A',
-        eth: '#627EEA',
-        sol: '#9945FF',
-    },
+    colors: palette,
     // Серии графика — серым, без второго брендового цвета (план, вопрос 3)
     chart: {
         emaFast: palette.bodyStrong,
@@ -64,7 +45,6 @@ export const theme = {
         sm: '6px',
         md: '8px',
         lg: '12px',
-        xl: '12px',
     },
     fontSize: {
         xs: '10px',
