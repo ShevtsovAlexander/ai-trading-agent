@@ -21,6 +21,8 @@ const ROWS: unknown[][] = Array.from({ length: TOTAL }, (_, i) => [
   T0 + (i + 1) * STEP - 1,
 ]);
 
+const BASE_WEIGHT = 37;
+
 interface KlinesParams {
   startTime?: number;
   endTime?: number;
@@ -32,7 +34,10 @@ interface KlinesParams {
 // всё подряд, сделал бы тест пагинации false-green.
 // ignoreStartTime — сломанный источник, который всегда отдаёт начало ряда:
 // им проверяется защита от бесконечного цикла.
-const fakeHttp = ({ ignoreStartTime = false } = {}) => {
+// Вес — как у Binance: накапливается за минуту, klines limit=1000 — weight 2;
+// ответ n-го запроса несёт вес после него (BASE_WEIGHT + 2·n).
+// weightHeader: false — ответ без заголовка.
+const fakeHttp = ({ ignoreStartTime = false, weightHeader = true } = {}) => {
   const calls: KlinesParams[] = [];
   const http = {
     get: (_url: string, { params }: { params: KlinesParams }) => {
@@ -44,7 +49,10 @@ const fakeHttp = ({ ignoreStartTime = false } = {}) => {
             (k[0] as number) >= params.startTime) &&
           (params.endTime === undefined || (k[0] as number) <= params.endTime),
       ).slice(0, params.limit ?? 500);
-      return of({ data });
+      const headers = weightHeader
+        ? { 'x-mbx-used-weight-1m': String(BASE_WEIGHT + 2 * calls.length) }
+        : {};
+      return of({ data, headers });
     },
   };
   return { http: http as unknown as HttpService, calls };
@@ -53,7 +61,7 @@ const fakeHttp = ({ ignoreStartTime = false } = {}) => {
 describe('fetchClosedCandles', () => {
   it('2300 свечей за 3 страницы: шаг везде STEP, без дублей и пропусков на стыках', async () => {
     const { http, calls } = fakeHttp();
-    const candles = await fetchClosedCandles(
+    const { candles } = await fetchClosedCandles(
       http,
       'BTCUSDT',
       '5m',
@@ -81,7 +89,7 @@ describe('fetchClosedCandles', () => {
 
   it('незакрытая последняя свеча отбрасывается', async () => {
     const { http, calls } = fakeHttp();
-    const candles = await fetchClosedCandles(
+    const { candles } = await fetchClosedCandles(
       http,
       'BTCUSDT',
       '5m',
@@ -102,5 +110,33 @@ describe('fetchClosedCandles', () => {
       fetchClosedCandles(http, 'BTCUSDT', '5m', T0, T0 + 2299 * STEP, NOW),
     ).rejects.toThrow('страница не сдвинулась');
     expect(calls).toHaveLength(2);
+  });
+
+  it('вес — из заголовка последней страницы', async () => {
+    const { http, calls } = fakeHttp();
+    const { usedWeight } = await fetchClosedCandles(
+      http,
+      'BTCUSDT',
+      '5m',
+      T0,
+      T0 + 2299 * STEP,
+      NOW,
+    );
+    expect(calls).toHaveLength(3);
+    expect(usedWeight).toBe(BASE_WEIGHT + 2 * 3);
+  });
+
+  it('нет заголовка веса — null', async () => {
+    const { http } = fakeHttp({ weightHeader: false });
+    const { candles, usedWeight } = await fetchClosedCandles(
+      http,
+      'BTCUSDT',
+      '5m',
+      T0,
+      T0 + 2299 * STEP,
+      NOW,
+    );
+    expect(candles).toHaveLength(2300);
+    expect(usedWeight).toBeNull();
   });
 });

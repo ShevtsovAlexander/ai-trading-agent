@@ -37,6 +37,10 @@ const CACHE_SIZE = 50;
 // локальные часы (klines.ts), а кэш держит результат целый интервал — если
 // часы спешат, незакрытая свеча жила бы в кэше до суток (1d).
 export const CLOSE_MARGIN_MS = 5000;
+// 80 % минутного лимита Binance (6000): выше — догрузка истории ждёт,
+// основное окно и карточку не режем (план TASK-0006, trade-off 5)
+export const WEIGHT_GUARD = 4800;
+const MINUTE_MS = 60_000;
 
 // NaN из indicators.ts — «периоду не хватило свечей»
 const round = (value: number | undefined): number | null =>
@@ -56,6 +60,8 @@ interface Computed {
 export class MarketDataService {
   private readonly logger = new Logger(MarketDataService.name);
   private readonly cache = new Map<string, Computed>();
+  // Последний вес IP из заголовка Binance и время ответа
+  private lastWeight: { weight: number; at: number } | null = null;
 
   // Часы — поле, чтобы тест мог сдвинуть время на интервал
   clock: () => number = Date.now;
@@ -134,6 +140,20 @@ export class MarketDataService {
     return interval as Interval;
   }
 
+  private noteWeight(weight: number | null): void {
+    if (weight !== null) this.lastWeight = { weight, at: this.clock() };
+  }
+
+  // Вес у порога в текущей минуте UTC. Binance обнуляет вес с началом
+  // минуты — замер прошлой минуты уже не говорит ничего.
+  weightExhausted(): boolean {
+    if (!this.lastWeight) return false;
+    const sameMinute =
+      Math.floor(this.lastWeight.at / MINUTE_MS) ===
+      Math.floor(this.clock() / MINUTE_MS);
+    return sameMinute && this.lastWeight.weight >= WEIGHT_GUARD;
+  }
+
   // count последних закрытых свечей + WARMUP слева, ряды с отрезанным
   // разогревом. Последняя закрытая — по часам: свеча, открытая на
   // floor(now/интервал)·интервал, ещё идёт, закрыта предыдущая.
@@ -155,7 +175,7 @@ export class MarketDataService {
 
     let all: Candle[];
     try {
-      all = await fetchClosedCandles(
+      const fetched = await fetchClosedCandles(
         this.http,
         COINS[coinId].symbol,
         interval,
@@ -163,6 +183,8 @@ export class MarketDataService {
         lastOpen,
         now,
       );
+      all = fetched.candles;
+      this.noteWeight(fetched.usedWeight);
     } catch (error) {
       this.logger.error(
         `klines ${coinId} ${interval}: ${(error as Error).message}`,
