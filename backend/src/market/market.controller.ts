@@ -20,6 +20,17 @@ export class MarketController {
     return this.marketData.getSeries(coinId, interval, range);
   }
 
+  // Кусок истории левее before (openTime, мс) с рядами индикаторов.
+  // 400 — невалидный before; 429 — страж веса Binance; 502 — Binance.
+  @Get('candles/:coinId/history')
+  getHistory(
+    @Param('coinId') coinId: string,
+    @Query('interval') interval: string,
+    @Query('before') before: string,
+  ) {
+    return this.marketData.getHistory(coinId, interval, before);
+  }
+
   // Последняя закрытая свеча интервала + AI-комментарий к ней (кэш по
   // монете и интервалу; отказ модели → прошлый комментарий или null)
   @Get('view/:coinId')
