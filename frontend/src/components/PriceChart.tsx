@@ -39,17 +39,19 @@ const RANGES: { label: string; value: Range }[] = [
 ];
 
 const Container = styled.div`
-  background: ${({ theme }) => theme.colors.surface};
-  border: 1px solid ${({ theme }) => theme.colors.border};
+  background: ${({ theme }) => theme.colors.surfaceCard};
+  border: 1px solid ${({ theme }) => theme.colors.hairline};
   border-radius: ${({ theme }) => theme.radius.lg};
   padding: 16px;
 `;
 
+// caption-uppercase системы (DESIGN.md «Typography»)
 const Title = styled.div`
-  font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  color: ${({ theme }) => theme.colors.muted};
   margin-bottom: 4px;
 `;
 
@@ -111,28 +113,30 @@ const Selectors = styled.div`
 // Подписи рядов: «1ч» и «4ч» есть и среди свечей, и среди периодов
 const SelectorLabel = styled.span`
   font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  color: ${({ theme }) => theme.colors.mutedSoft};
 `;
 
 const Separator = styled.span`
   width: 1px;
   height: 14px;
-  background: ${({ theme }) => theme.colors.border};
+  background: ${({ theme }) => theme.colors.hairline};
 `;
 
-const RangeBtn = styled.button<{ active: boolean }>`
-  padding: 2px 8px;
+// category-tab системы, mono. Активная — surfaceElevated, не surfaceCard
+// из DESIGN.md: кнопки лежат на карточке того же цвета и слились бы с ней
+// (решение человека, TASK-0003.7)
+const RangeBtn = styled.button<{ $active: boolean }>`
+  padding: 3px 8px;
   border-radius: ${({ theme }) => theme.radius.sm};
-  font-size: ${({ theme }) => theme.fontSize.xs};
-  border: 1px solid
-    ${({ active, theme }) =>
-      active ? theme.colors.purple : theme.colors.border};
-  background: ${({ active, theme }) =>
-    active ? `${theme.colors.purple}22` : "transparent"};
-  color: ${({ active, theme }) =>
-    active ? theme.colors.purple : theme.colors.textMuted};
+  border: none;
+  font-family: ${({ theme }) => theme.font.mono};
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  background: ${({ $active, theme }) =>
+    $active ? theme.colors.surfaceElevated : "transparent"};
+  color: ${({ $active, theme }) =>
+    $active ? theme.colors.ink : theme.colors.muted};
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.15s, color 0.15s;
 
   &:disabled {
     opacity: 0.35;
@@ -175,7 +179,7 @@ export const PriceChart = ({
             {INTERVALS.map((iv) => (
               <RangeBtn
                 key={iv}
-                active={interval === iv}
+                $active={interval === iv}
                 onClick={() => onIntervalChange(iv)}
               >
                 {INTERVAL_LABELS[iv]}
@@ -188,7 +192,7 @@ export const PriceChart = ({
           {RANGES.map((r) => (
             <RangeBtn
               key={r.value}
-              active={range === r.value}
+              $active={range === r.value}
               // Больше MAX_CANDLES свечей на интервале — бэкенд ответит 400;
               // кнопка гаснет заранее (3мес на 5м — 25 920 свечей)
               disabled={!isAllowed(r.value, interval)}

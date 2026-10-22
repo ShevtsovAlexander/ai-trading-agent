@@ -63,7 +63,7 @@ export const theme = {
         xs: '4px',
         sm: '6px',
         md: '8px',
-        lg: '10px',
+        lg: '12px',
         xl: '12px',
     },
     fontSize: {
@@ -73,6 +73,8 @@ export const theme = {
         base: '14px',
         lg: '16px',
         xl: '22px',
+        // Цена в карточке: stat-display D (56px) не влезает в колонку
+        display: '28px',
     },
 };
 

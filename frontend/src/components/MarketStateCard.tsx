@@ -1,4 +1,4 @@
-import styled from 'styled-components';
+import styled, { useTheme, type DefaultTheme } from 'styled-components';
 import { INTERVAL_LABELS, INTERVAL_MS } from '../types/market';
 import { formatCandleTime } from '../utils/candleTime';
 import type { Interval, MarketView } from '../types/market';
@@ -16,8 +16,8 @@ const TREND_LABELS = {
 // --- styled ---
 
 const Container = styled.div`
-    background: ${({ theme }) => theme.colors.surface};
-    border: 1px solid ${({ theme }) => theme.colors.border};
+    background: ${({ theme }) => theme.colors.surfaceCard};
+    border: 1px solid ${({ theme }) => theme.colors.hairline};
     border-radius: ${({ theme }) => theme.radius.lg};
     padding: 16px;
 `;
@@ -32,12 +32,26 @@ const Header = styled.div`
 const Market = styled.div`
     font-size: ${({ theme }) => theme.fontSize.base};
     font-weight: 600;
-    color: ${({ theme }) => theme.colors.text};
+    color: ${({ theme }) => theme.colors.ink};
 `;
 
 const Candle = styled.div`
     font-size: ${({ theme }) => theme.fontSize.xs};
-    color: ${({ theme }) => theme.colors.textMuted};
+    color: ${({ theme }) => theme.colors.muted};
+`;
+
+// Цена — stat-callout системы: жёлтая, Inter 700 с отрицательным
+// трекингом. Место «б» из плана (вопрос 4)
+const Price = styled.div`
+    font-size: ${({ theme }) => theme.fontSize.display};
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    line-height: 1;
+    color: ${({ theme }) => theme.colors.primary};
+`;
+
+const PriceBlock = styled.div`
+    margin-bottom: 12px;
 `;
 
 const StatsGrid = styled.div`
@@ -51,32 +65,35 @@ const Stat = styled.div``;
 
 const StatLabel = styled.div`
     font-size: ${({ theme }) => theme.fontSize.xs};
-    color: ${({ theme }) => theme.colors.textMuted};
+    color: ${({ theme }) => theme.colors.muted};
     margin-bottom: 2px;
 `;
 
-const StatValue = styled.div<{ color?: string }>`
+const StatValue = styled.div<{ $color?: string }>`
+    font-family: ${({ theme }) => theme.font.mono};
     font-size: ${({ theme }) => theme.fontSize.md};
     font-weight: 500;
-    color: ${({ color, theme }) => color ?? theme.colors.text};
+    color: ${({ $color, theme }) => $color ?? theme.colors.bodyStrong};
 `;
 
 const Divider = styled.div`
-    border-top: 1px solid ${({ theme }) => theme.colors.border};
+    border-top: 1px solid ${({ theme }) => theme.colors.hairline};
     margin: 10px 0;
 `;
 
+// caption-uppercase системы (DESIGN.md «Typography»)
 const SectionTitle = styled.div`
-    font-size: ${({ theme }) => theme.fontSize.xs};
-    color: ${({ theme }) => theme.colors.textMuted};
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    color: ${({ theme }) => theme.colors.muted};
     margin-bottom: 8px;
 `;
 
 const AiReasoning = styled.p`
   font-size: ${({ theme }) => theme.fontSize.md};
-  color: ${({ theme }) => theme.colors.textMuted};
+  color: ${({ theme }) => theme.colors.body};
   line-height: 1.5;
   font-style: italic;
 `;
@@ -86,16 +103,16 @@ const AiReasoning = styled.p`
 const fmt = (val: number | null | undefined, prefix = '') =>
     val != null ? `${prefix}${val.toLocaleString()}` : '—';
 
-const rsiColor = (rsi: number | null) => {
+const rsiColor = (rsi: number | null, theme: DefaultTheme) => {
     if (rsi == null) return undefined;
-    if (rsi < 35) return '#4ade80';
-    if (rsi > 65) return '#f87171';
+    if (rsi < 35) return theme.colors.up;
+    if (rsi > 65) return theme.colors.down;
     return undefined;
 };
 
-const macdColor = (histogram: number | null) => {
+const macdColor = (histogram: number | null, theme: DefaultTheme) => {
     if (histogram == null) return undefined;
-    return histogram > 0 ? '#4ade80' : '#f87171';
+    return histogram > 0 ? theme.colors.up : theme.colors.down;
 };
 
 // Свеча — от открытия до закрытия: closedAt — последняя миллисекунда, +1
@@ -115,6 +132,7 @@ const candleLabel = (closedAt: number, interval: Interval) => {
 // --- component ---
 
 export const MarketStateCard = ({ data }: Props) => {
+    const theme = useTheme();
     // Индикаторы — на последней закрытой свече интервала
     const { ema9, ema21, rsi } = data.latest;
 
@@ -141,12 +159,14 @@ export const MarketStateCard = ({ data }: Props) => {
                 </Candle>
             </Header>
 
-            {/* Цена + MA5 + тренд */}
+            {/* Цена — отдельной строкой: крупный шрифт не влезает в колонку */}
+            <PriceBlock>
+                <StatLabel>Цена</StatLabel>
+                <Price>${data.price.toLocaleString()}</Price>
+            </PriceBlock>
+
+            {/* MA5 + тренд */}
             <StatsGrid>
-                <Stat>
-                    <StatLabel>Цена</StatLabel>
-                    <StatValue>${data.price.toLocaleString()}</StatValue>
-                </Stat>
                 <Stat>
                     <StatLabel>MA5</StatLabel>
                     <StatValue>{fmt(data.ma5, '$')}</StatValue>
@@ -169,7 +189,7 @@ export const MarketStateCard = ({ data }: Props) => {
                 </Stat>
                 <Stat>
                     <StatLabel>RSI</StatLabel>
-                    <StatValue color={rsiColor(rsi)}>{fmt(rsi)}</StatValue>
+                    <StatValue $color={rsiColor(rsi, theme)}>{fmt(rsi)}</StatValue>
                 </Stat>
             </StatsGrid>
 
@@ -186,7 +206,7 @@ export const MarketStateCard = ({ data }: Props) => {
                     </Stat>
                     <Stat>
                         <StatLabel>Histogram</StatLabel>
-                        <StatValue color={macdColor(macd.histogram)}>
+                        <StatValue $color={macdColor(macd.histogram, theme)}>
                             {macd.histogram.toFixed(2)}
                         </StatValue>
                     </Stat>
