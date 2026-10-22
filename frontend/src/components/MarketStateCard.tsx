@@ -1,6 +1,7 @@
 import styled, { useTheme, type DefaultTheme } from 'styled-components';
 import { INTERVAL_LABELS, INTERVAL_MS } from '../types/market';
 import { formatCandleTime } from '../utils/candleTime';
+import { Skeleton } from './Skeleton';
 import type { Interval, MarketView } from '../types/market';
 
 interface Props {
@@ -239,3 +240,46 @@ export const MarketStateCard = ({ data }: Props) => {
         </Container>
     );
 };
+
+// Заготовка карточки на время загрузки (TASK-0005): та же форма — заголовок,
+// цена, сетка показателей, абзац AI
+export const MarketStateCardSkeleton = () => (
+    <Container aria-busy="true">
+        <Header>
+            <Skeleton $w="90px" $h="16px" />
+            <Skeleton $w="140px" $h="10px" />
+        </Header>
+        <PriceBlock>
+            <Skeleton $w="40px" $h="10px" />
+            <SkeletonGap />
+            <Skeleton $w="200px" $h="28px" />
+        </PriceBlock>
+        {[0, 1, 2, 3].map((row) => (
+            <StatsGrid key={row}>
+                {[0, 1, 2].map((col) => (
+                    <Stat key={col}>
+                        <Skeleton $w="50px" $h="10px" />
+                        <SkeletonGap />
+                        <Skeleton $w="90px" $h="14px" />
+                    </Stat>
+                ))}
+            </StatsGrid>
+        ))}
+        <Divider />
+        <Skeleton $w="30px" $h="12px" />
+        <SkeletonGap />
+        {['100%', '100%', '70%'].map((w, i) => (
+            <SkeletonLine key={i}>
+                <Skeleton $w={w} $h="13px" />
+            </SkeletonLine>
+        ))}
+    </Container>
+);
+
+const SkeletonGap = styled.div`
+    height: 6px;
+`;
+
+const SkeletonLine = styled.div`
+    margin-bottom: 8px;
+`;

@@ -4,6 +4,7 @@ import { INTERVAL_LABELS, RANGE_MS, isAllowed } from "../types/market";
 import type { Interval, MarketSeries, Range } from "../types/market";
 import { formatCandleTime } from "../utils/candleTime";
 import { CandleChart } from "./CandleChart";
+import { Skeleton } from "./Skeleton";
 import { seriesKey } from "./chartData";
 import type { HoverPoint } from "./CandleChart";
 
@@ -23,6 +24,7 @@ interface Props {
   range: Range;
   onRangeChange: (range: Range) => void;
   onIntervalChange: (interval: Interval) => void;
+  loading?: boolean; // данные в пути (TASK-0005) — плашки поверх пустого графика
 }
 
 const INTERVALS: Interval[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
@@ -91,6 +93,20 @@ const fmt = (v: number | null) =>
     ? "—"
     : v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Плашка — поверх пустого графика, не вместо него: lightweight-charts
+// живёт в контейнере и не пересоздаётся при каждой загрузке
+const ChartArea = styled.div`
+  position: relative;
+`;
+
+// z-index — над слоями canvas графика, у них свой z-index
+const ChartSkeleton = styled.div`
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+`;
+
 const Controls = styled.div`
   display: flex;
   justify-content: space-between;
@@ -153,6 +169,7 @@ export const PriceChart = ({
   range,
   onRangeChange,
   onIntervalChange,
+  loading = false,
 }: Props) => {
   const theme = useTheme();
   const [hover, setHover] = useState<HoverPoint | null>(null);
@@ -211,6 +228,7 @@ export const PriceChart = ({
       </Controls>
 
       <Legend>
+        {loading && <Skeleton $w="560px" $h="12px" />}
         {shown && (
           <>
             <LegendItem>
@@ -238,12 +256,19 @@ export const PriceChart = ({
         )}
       </Legend>
 
-      <CandleChart
-        data={data}
-        interval={interval}
-        withDate={withDate}
-        onHover={setHover}
-      />
+      <ChartArea aria-busy={loading}>
+        <CandleChart
+          data={data}
+          interval={interval}
+          withDate={withDate}
+          onHover={setHover}
+        />
+        {loading && (
+          <ChartSkeleton>
+            <Skeleton $h="100%" />
+          </ChartSkeleton>
+        )}
+      </ChartArea>
     </Container>
   );
 };

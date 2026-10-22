@@ -1,12 +1,14 @@
 import styled, { useTheme, type DefaultTheme } from "styled-components";
 import type { Interval, SeriesPoint } from "../types/market";
 import { formatCandleTime } from "../utils/candleTime";
+import { Skeleton } from "./Skeleton";
 
 // series — ряды индикаторов текущего графика (свечи интервала)
 interface Props {
   coinId: string;
   interval: Interval;
   series: SeriesPoint[];
+  loading?: boolean; // данные в пути (TASK-0005) — строки-плашки вместо «Нет данных»
 }
 
 const ROWS = 50;
@@ -111,7 +113,7 @@ const rsiColor = (rsi: number | null, theme: DefaultTheme): string | undefined =
 
 // --- component ---
 
-export const IndicatorHistoryTable = ({ coinId, interval, series }: Props) => {
+export const IndicatorHistoryTable = ({ coinId, interval, series, loading = false }: Props) => {
   const theme = useTheme();
   const rows = series.slice(-ROWS).reverse(); // новые сверху
   // Время открытия свечи, как в тултипе графика. Дата — если строки
@@ -122,7 +124,7 @@ export const IndicatorHistoryTable = ({ coinId, interval, series }: Props) => {
       new Date(rows[rows.length - 1].t).toDateString();
 
   return (
-    <Container>
+    <Container aria-busy={loading}>
       <Inner>
         <Title>История индикаторов</Title>
         <Table>
@@ -133,7 +135,17 @@ export const IndicatorHistoryTable = ({ coinId, interval, series }: Props) => {
             <Th>Время</Th>
           </HeadRow>
 
-          {rows.length === 0 && <Empty>Нет данных</Empty>}
+          {loading &&
+            Array.from({ length: 8 }, (_, i) => (
+              <Row key={i}>
+                <Skeleton $w="36px" $h="13px" />
+                <Skeleton $w="80px" $h="13px" />
+                <Skeleton $w="32px" $h="13px" />
+                <Skeleton $w="44px" $h="13px" />
+              </Row>
+            ))}
+
+          {!loading && rows.length === 0 && <Empty>Нет данных</Empty>}
 
           {rows.map((d) => (
             <Row key={d.t}>

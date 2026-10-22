@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { getNews, getDigest, type NewsItem, type Digest } from '../api/news';
+import { useDelayedFlag } from '../hooks/useDelayedFlag';
+import { Skeleton } from './Skeleton';
 
 // Категории, которые метим как регуляторно-значимые (визуальный акцент)
 const SIGNAL_CATEGORIES = new Set(['policy', 'regulation', 'finance']);
@@ -9,6 +11,8 @@ export const NewsPanel = () => {
     const [news, setNews] = useState<NewsItem[]>([]);
     const [digest, setDigest] = useState<Digest | null>(null);
     const [loading, setLoading] = useState(true);
+    // Скелетон — через 300 мс, как на «Рынке» (TASK-0005)
+    const skeleton = useDelayedFlag(loading, 300);
 
     useEffect(() => {
         let cancelled = false;
@@ -33,9 +37,28 @@ export const NewsPanel = () => {
 
     if (loading) {
         return (
-            <Container>
+            <Container aria-busy="true">
                 <Title>Лента новостей</Title>
-                <Muted>Загрузка…</Muted>
+                {skeleton && (
+                    <>
+                        {/* Дайджест — одной плашкой: внутри DigestCard плашки
+                            сливались бы с его фоном того же тона */}
+                        <SkeletonDigest>
+                            <Skeleton $h="84px" />
+                        </SkeletonDigest>
+                        <List>
+                            {Array.from({ length: 5 }, (_, i) => (
+                                <SkeletonCard key={i}>
+                                    <Skeleton $w="64px" $h="64px" />
+                                    <Content>
+                                        <Skeleton $w="420px" $h="14px" />
+                                        <Skeleton $w="160px" $h="10px" />
+                                    </Content>
+                                </SkeletonCard>
+                            ))}
+                        </List>
+                    </>
+                )}
             </Container>
         );
     }
@@ -148,11 +171,15 @@ const DigestText = styled.p`
   white-space: pre-line; /* LLM может вернуть переносы по темам */
 `;
 
-const Muted = styled.div`
-  color: ${({ theme }) => theme.colors.muted};
-  font-size: ${({ theme }) => theme.fontSize.md};
-  padding: 24px 0;
-  text-align: center;
+const SkeletonDigest = styled.div`
+  margin-bottom: 12px;
+`;
+
+// Строка ленты на время загрузки — те же отступы, что у Card
+const SkeletonCard = styled.div`
+  display: flex;
+  gap: 12px;
+  padding: 10px;
 `;
 
 const List = styled.div`

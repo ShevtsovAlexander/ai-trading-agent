@@ -4,10 +4,14 @@ import { isAxiosError } from "axios";
 import { getCandles, getView } from "./api/market";
 import { INTERVAL_MS, nearestAllowed } from "./types/market";
 import type { Interval, MarketSeries, MarketView, Range } from "./types/market";
-import { MarketStateCard } from "./components/MarketStateCard";
+import {
+  MarketStateCard,
+  MarketStateCardSkeleton,
+} from "./components/MarketStateCard";
 import { PriceChart } from "./components/PriceChart";
 import { IndicatorHistoryTable } from "./components/IndicatorHistoryTable";
 import { NewsPanel } from "./components/NewsPanel";
+import { useDelayedFlag } from "./hooks/useDelayedFlag";
 
 // Монеты — монохром: цвет монеты был бы вторым брендовым цветом
 // (план TASK-0003, вопрос 2)
@@ -65,6 +69,10 @@ export default function App() {
   // ответ прошлой монеты закрашивает экран новой, а флаг ошибки рапортует
   // «всё в порядке» на данных не той монеты.
   const requestRef = useRef(0);
+  // Выбор, на который последний раз пришёл ответ (данные или ошибка).
+  // Загрузка — пока текущий выбор с ним не совпал: ошибка прошлой монеты
+  // не гасит скелетон новой (TASK-0005, критик)
+  const [settled, setSettled] = useState("");
 
   const load = useCallback(async () => {
     const token = ++requestRef.current;
@@ -73,6 +81,7 @@ export default function App() {
       getView(activeCoin.id, interval),
     ]);
     if (token !== requestRef.current) return; // приехало поздно
+    setSettled(`${activeCoin.id}|${interval}|${range}`);
 
     if (c.status === "fulfilled") {
       setChart(c.value);
@@ -125,6 +134,14 @@ export default function App() {
     view && view.coinId === activeCoin.id && view.interval === interval
       ? view
       : null;
+  // Загрузка — данных про текущий выбор нет, и ответа на него ещё не было:
+  // первая загрузка и переключение. Опрос данные не прячет; ошибка текущего
+  // выбора — баннер или пометка, без скелетона. Баннер прошлого выбора
+  // висит до ответа, как в TASK-0004, — скелетон рядом с ним. Показ — через
+  // 300 мс, ответ из кэша не мигает (TASK-0005)
+  const pending = settled !== `${activeCoin.id}|${interval}|${range}`;
+  const chartLoading = useDelayedFlag(!chartShown && pending, 300);
+  const viewLoading = useDelayedFlag(!viewShown && pending, 300);
 
   return (
     <Wrapper>
@@ -178,6 +195,7 @@ export default function App() {
               range={range}
               onRangeChange={setRange}
               onIntervalChange={changeInterval}
+              loading={chartLoading}
             />
           </TopRow>
 
@@ -190,11 +208,13 @@ export default function App() {
                 </CardError>
               )}
               {viewShown && <MarketStateCard data={viewShown} />}
+              {viewLoading && <MarketStateCardSkeleton />}
             </Left>
             <IndicatorHistoryTable
               coinId={activeCoin.id}
               interval={interval}
               series={chartShown?.series ?? []}
+              loading={chartLoading}
             />
           </BottomRow>
         </TabPanel>
