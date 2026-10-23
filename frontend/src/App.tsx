@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import styled from "styled-components";
 import { isAxiosError } from "axios";
 import { getCandles, getView } from "./api/market";
@@ -12,6 +12,8 @@ import { PriceChart } from "./components/PriceChart";
 import { IndicatorHistoryTable } from "./components/IndicatorHistoryTable";
 import { NewsPanel } from "./components/NewsPanel";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
+import { useChartHistory } from "./hooks/useChartHistory";
+import { mergeSeries } from "./components/chartData";
 
 // Монеты — монохром: цвет монеты был бы вторым брендовым цветом
 // (план TASK-0003, вопрос 2)
@@ -130,6 +132,24 @@ export default function App() {
     chart.range === range
       ? chart
       : null;
+  // История левее основного окна; на графике — их объединение по t.
+  // Таблица остаётся на основном окне: ей нужны последние 50 точек
+  const history = useChartHistory(activeCoin.id, interval, range, chartShown);
+  const chartData = useMemo(
+    () => (chartShown ? mergeSeries(history.chunks, chartShown) : null),
+    [chartShown, history.chunks],
+  );
+
+  // Временно, только в dev: догрузка из консоли/CDP до края графика (T6)
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (window as unknown as { __history?: unknown }).__history = {
+      loadMore: () => chartData && history.loadMore(chartData.candles[0].t),
+      state: history,
+      data: chartData,
+    };
+  }, [chartData, history]);
+
   const viewShown =
     view && view.coinId === activeCoin.id && view.interval === interval
       ? view
@@ -189,7 +209,7 @@ export default function App() {
 
           <TopRow>
             <PriceChart
-              data={chartShown}
+              data={chartData}
               coin={activeCoin}
               interval={interval}
               range={range}

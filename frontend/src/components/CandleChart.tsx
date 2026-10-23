@@ -14,6 +14,7 @@ import type {
   IPriceLine,
   ISeriesApi,
   MouseEventParams,
+  SeriesType,
   Time,
   UTCTimestamp,
 } from "lightweight-charts";
@@ -21,6 +22,7 @@ import type { Interval, MarketSeries } from "../types/market";
 import { formatCandleTime } from "../utils/candleTime";
 import { BandPrimitive } from "./bandPrimitive";
 import { seriesKey, toChartData } from "./chartData";
+import type { ChartData } from "./chartData";
 
 // Свеча под перекрестием — для легенды над графиком: ключ данных и время
 // открытия, не ссылка на объект — опрос приносит новые объекты тех же свечей
@@ -45,6 +47,15 @@ const HEIGHT = 360;
 const Box = styled.div`
   height: ${HEIGHT}px;
 `;
+
+interface Drawn {
+  key: string;
+  first: UTCTimestamp;
+  last: UTCTimestamp;
+}
+
+// Точка любой серии: у всех рядов toChartData одно и то же время по индексу
+type Point = ChartData["candles"][number] | ChartData["ema9"][number];
 
 interface Series {
   candles: ISeriesApi<"Candlestick">;
@@ -76,9 +87,11 @@ export const CandleChart = ({ data, interval, withDate, onHover }: Props) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<Series | null>(null);
-  // Монета|интервал|диапазон последних нарисованных данных: fitContent только
-  // при смене — опрос с теми же данными не сбрасывает зум и прокрутку
-  const keyRef = useRef<string | null>(null);
+  // Последние нарисованные данные: ключ (монета|интервал|диапазон) и время
+  // крайних свечей. fitContent — только при смене ключа: опрос не сбрасывает
+  // зум и прокрутку. Тот же ключ и левый край не уехал вправо — опрос и
+  // догрузка истории: правые свечи через update(), не setData (замер T1)
+  const drawnRef = useRef<Drawn | null>(null);
   // Линия текущей цены — своя, не встроенная метка серии: та показывает
   // цену последней ВИДИМОЙ свечи, и при зуме в историю жёлтым подписывалась
   // бы старая цена (критик T5)
@@ -140,6 +153,18 @@ export const CandleChart = ({ data, interval, withDate, onHover }: Props) => {
       band,
     };
     chartRef.current = chart;
+    // Временно, только в dev: нарисованные ряды для сверки CDP (TASK-0006.5),
+    // уходит в T6 вместе с __history
+    if (import.meta.env.DEV) {
+      const s = seriesRef.current;
+      (window as unknown as { __drawn?: unknown }).__drawn = () => ({
+        candles: s.candles.data(),
+        ema9: s.ema9.data(),
+        ema21: s.ema21.data(),
+        bbUpper: s.bbUpper.data(),
+        bbLower: s.bbLower.data(),
+      });
+    }
 
     // Canvas не перерисовывается сам, когда догружается веб-шрифт: без этого
     // подписи осей остались бы системным моноширинным
@@ -153,7 +178,7 @@ export const CandleChart = ({ data, interval, withDate, onHover }: Props) => {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
-      keyRef.current = null;
+      drawnRef.current = null;
       lastPriceRef.current = null;
     };
   }, [theme]);
@@ -187,17 +212,42 @@ export const CandleChart = ({ data, interval, withDate, onHover }: Props) => {
       s.bbUpper.setData([]);
       s.bbLower.setData([]);
       s.band.setData({ bbUpper: [], bbLower: [] });
-      keyRef.current = null;
+      drawnRef.current = null;
       return;
     }
     // Интервал — из самих данных: порог разрыва не зависит от того, что
     // App отфильтровал data по текущему интервалу
     const d = toChartData(data, data.interval);
-    s.candles.setData(d.candles);
-    s.ema9.setData(d.ema9);
-    s.ema21.setData(d.ema21);
-    s.bbUpper.setData(d.bbUpper);
-    s.bbLower.setData(d.bbLower);
+    const key = seriesKey(data);
+    const prev = drawnRef.current;
+    const first = d.candles[0]?.time;
+    const end = d.candles[d.candles.length - 1]?.time;
+    // Индекс прежней последней свечи: левее неё ряд прежний (или с куском
+    // истории слева), правее — новое от опроса
+    const cut =
+      prev && prev.key === key && first != null && first <= prev.first && end >= prev.last
+        ? d.candles.findIndex((p) => p.time === prev.last)
+        : -1;
+    const pairs = [
+      [s.candles, d.candles],
+      [s.ema9, d.ema9],
+      [s.ema21, d.ema21],
+      [s.bbUpper, d.bbUpper],
+      [s.bbLower, d.bbLower],
+    ] as unknown as [ISeriesApi<SeriesType>, Point[]][];
+    if (cut === -1) {
+      // Смена ключа, сброс истории (левый край уехал вправо), пустой ряд
+      for (const [api, pts] of pairs) api.setData(pts);
+    } else {
+      // Кусок слева и опрос справа — разными обновлениями: в одном setData
+      // вид сдвигается на бар (критик T1). Прежнюю последнюю точку update()
+      // переписывает: перед новым разрывом её цвет становится BRIDGE
+      const prefix = first! < prev!.first;
+      for (const [api, pts] of pairs) {
+        if (prefix) api.setData(pts.slice(0, cut + 1));
+        for (let i = prefix ? cut + 1 : cut; i < pts.length; i++) api.update(pts[i]);
+      }
+    }
     s.band.setData(d);
     const last = data.candles[data.candles.length - 1];
     if (last) {
@@ -212,11 +262,8 @@ export const CandleChart = ({ data, interval, withDate, onHover }: Props) => {
         axisLabelTextColor: theme.colors.onPrimary,
       });
     }
-    const key = seriesKey(data);
-    if (key !== keyRef.current) {
-      chart.timeScale().fitContent();
-      keyRef.current = key;
-    }
+    if (key !== prev?.key) chart.timeScale().fitContent();
+    drawnRef.current = first != null ? { key, first, last: end } : null;
   }, [data, theme]);
 
   // Перекрестие → свеча по времени открытия. На разрыве (пустая точка) и вне

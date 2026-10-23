@@ -65,7 +65,14 @@ export class BandPrimitive implements ISeriesPrimitive<Time> {
     // Сплошные куски: подряд идущие точки, где обе границы есть
     const pieces: { x: number; up: number; low: number }[][] = [];
     let piece: { x: number; up: number; low: number }[] = [];
-    for (let i = 0; i < bbUpper.length; i++) {
+    // Только видимые бары (±1 — край заливки за кромкой): обход всего ряда
+    // на 100 тыс. барах — 28 мс на кадр, по видимому — ≤ 4 мс (замер T1).
+    // Логический индекс = индекс в массиве: все ряды одной длины, разрывы общие
+    const vr = ts.getVisibleLogicalRange();
+    if (!vr) return;
+    const from = Math.max(0, Math.floor(vr.from) - 1);
+    const to = Math.min(bbUpper.length - 1, Math.ceil(vr.to) + 1);
+    for (let i = from; i <= to; i++) {
       const u = bbUpper[i];
       const l = bbLower[i];
       const x = ts.timeToCoordinate(u.time);
