@@ -13,6 +13,7 @@ import type {
   IChartApi,
   IPriceLine,
   ISeriesApi,
+  LogicalRange,
   MouseEventParams,
   SeriesType,
   Time,
@@ -40,9 +41,16 @@ interface Props {
   withDate: boolean; // диапазон длиннее суток — дата в подписи перекрестия
   // Свеча под перекрестием; null — перекрестия нет или оно на разрыве
   onHover: (p: HoverPoint | null) => void;
+  // Слева видно меньше EDGE_BARS скрытых баров — нужен кусок истории.
+  // Зовётся на каждом сдвиге у края: лишние вызовы гасит хук истории
+  // (кусок в пути, начало истории, потолок)
+  onNeedMore: () => void;
+  complete: boolean; // левее свечей у Binance нет — дальше не листается
 }
 
 const HEIGHT = 360;
+// Запас баров слева, при котором грузится следующий кусок
+const EDGE_BARS = 200;
 
 const Box = styled.div`
   height: ${HEIGHT}px;
@@ -82,7 +90,14 @@ const tickMark = (time: Time, type: TickMarkType): string => {
   }
 };
 
-export const CandleChart = ({ data, interval, withDate, onHover }: Props) => {
+export const CandleChart = ({
+  data,
+  interval,
+  withDate,
+  onHover,
+  onNeedMore,
+  complete,
+}: Props) => {
   const theme = useTheme();
   const boxRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -119,7 +134,8 @@ export const CandleChart = ({ data, interval, withDate, onHover }: Props) => {
         horzLine: { color: theme.chart.crosshair, labelBackgroundColor: theme.colors.surfaceElevated },
       },
       rightPriceScale: { borderColor: theme.colors.hairline },
-      timeScale: { borderColor: theme.colors.hairline },
+      // Вправо за последнюю свечу не уводится: правее данных нет
+      timeScale: { borderColor: theme.colors.hairline, fixRightEdge: true },
     });
     // Точность — как у бэкенда (round до 2 знаков)
     const priceFormat = { type: "price" as const, precision: 2, minMove: 0.01 };
@@ -153,18 +169,6 @@ export const CandleChart = ({ data, interval, withDate, onHover }: Props) => {
       band,
     };
     chartRef.current = chart;
-    // Временно, только в dev: нарисованные ряды для сверки CDP (TASK-0006.5),
-    // уходит в T6 вместе с __history
-    if (import.meta.env.DEV) {
-      const s = seriesRef.current;
-      (window as unknown as { __drawn?: unknown }).__drawn = () => ({
-        candles: s.candles.data(),
-        ema9: s.ema9.data(),
-        ema21: s.ema21.data(),
-        bbUpper: s.bbUpper.data(),
-        bbLower: s.bbLower.data(),
-      });
-    }
 
     // Canvas не перерисовывается сам, когда догружается веб-шрифт: без этого
     // подписи осей остались бы системным моноширинным
@@ -193,6 +197,17 @@ export const CandleChart = ({ data, interval, withDate, onHover }: Props) => {
       timeScale: { timeVisible: interval !== "1d", tickMarkFormatter: tickMark },
     });
   }, [interval, withDate, theme]);
+
+  // Обработчик края зовёт актуальный onNeedMore: событие диапазона приходит
+  // синхронно внутри setData, до переподписки эффектом ниже, — со старым
+  // замыканием ушёл бы запрос по прежнему левому краю (критик T6). Эффект
+  // объявлен раньше эффекта данных: к их setData ref уже свежий. Окно между
+  // коммитом и эффектами ref не закрывает — событие там зовёт onNeedMore
+  // прошлого рендера; дубль запроса гасит lastRef в useChartHistory
+  const needMoreRef = useRef(onNeedMore);
+  useEffect(() => {
+    needMoreRef.current = onNeedMore;
+  }, [onNeedMore]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -265,6 +280,25 @@ export const CandleChart = ({ data, interval, withDate, onHover }: Props) => {
     if (key !== prev?.key) chart.timeScale().fitContent();
     drawnRef.current = first != null ? { key, first, last: end } : null;
   }, [data, theme]);
+
+  // Начало истории у Binance — левый край прибит к первой свече
+  useEffect(() => {
+    chartRef.current?.applyOptions({ timeScale: { fixLeftEdge: complete } });
+  }, [complete, theme]);
+
+  // Подход к левому краю → следующий кусок. Позицию при добавлении слева
+  // библиотека держит сама; ручной сдвиг её ломает (замер T1)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const ts = chart.timeScale();
+    const handler = (range: LogicalRange | null) => {
+      const bars = range && seriesRef.current?.candles.barsInLogicalRange(range);
+      if (bars && bars.barsBefore < EDGE_BARS) needMoreRef.current();
+    };
+    ts.subscribeVisibleLogicalRangeChange(handler);
+    return () => ts.unsubscribeVisibleLogicalRangeChange(handler);
+  }, [theme]);
 
   // Перекрестие → свеча по времени открытия. На разрыве (пустая точка) и вне
   // данных — null: легенда покажет последнюю свечу

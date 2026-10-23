@@ -25,6 +25,8 @@ interface Props {
   onRangeChange: (range: Range) => void;
   onIntervalChange: (interval: Interval) => void;
   loading?: boolean; // данные в пути (TASK-0005) — плашки поверх пустого графика
+  onNeedMore: () => void; // подход к левому краю — кусок истории
+  complete: boolean; // начало истории у Binance
 }
 
 const INTERVALS: Interval[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
@@ -170,6 +172,8 @@ export const PriceChart = ({
   onRangeChange,
   onIntervalChange,
   loading = false,
+  onNeedMore,
+  complete,
 }: Props) => {
   const theme = useTheme();
   const [hover, setHover] = useState<HoverPoint | null>(null);
@@ -262,6 +266,8 @@ export const PriceChart = ({
           interval={interval}
           withDate={withDate}
           onHover={setHover}
+          onNeedMore={onNeedMore}
+          complete={complete}
         />
         {loading && (
           <ChartSkeleton>

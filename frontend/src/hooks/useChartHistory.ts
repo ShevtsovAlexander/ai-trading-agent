@@ -51,9 +51,12 @@ export const useChartHistory = (
 ) => {
   const key = `${coinId}|${interval}|${range}`;
   const [state, setState] = useState<State>(() => fresh(key, 0, main));
-  // Поколение, у которого кусок в пути: второй вызов до ререндера не шлёт
-  // второй запрос
-  const busyRef = useRef(-1);
+  // Последний запрошенный кусок поколения. Каждый следующий строго левее,
+  // так что before не левее запрошенного — дубль, в пути ли запрос или уже
+  // ответил: ответ приходит раньше ререндера, и событие края между ними
+  // зовёт loadMore прошлого рендера с прежним before (дубль в T6).
+  // Ошибка запись снимает — повтор 502/429 возможен
+  const lastRef = useRef<{ epoch: number; before: number } | null>(null);
 
   // Состояние из прошлого рендера (паттерн React): ключ и основное окно
   // сравниваются при рендере, без setState в эффекте
@@ -78,12 +81,13 @@ export const useChartHistory = (
   // before — t самой ранней показанной свечи
   const loadMore = useCallback(
     (before: number) => {
-      if (loading || complete || capped || busyRef.current === epoch) return;
-      busyRef.current = epoch;
+      const last = lastRef.current;
+      if (loading || complete || capped) return;
+      if (last && last.epoch === epoch && before >= last.before) return;
+      lastRef.current = { epoch, before };
       setState((st) => (st.epoch === epoch ? { ...st, loading: true, error: null } : st));
       getHistory(coinId, interval, before).then(
         (chunk) => {
-          if (busyRef.current === epoch) busyRef.current = -1;
           setState((st) =>
             st.epoch === epoch
               ? {
@@ -96,7 +100,8 @@ export const useChartHistory = (
           );
         },
         (e) => {
-          if (busyRef.current === epoch) busyRef.current = -1;
+          const cur = lastRef.current;
+          if (cur && cur.epoch === epoch && cur.before === before) lastRef.current = null;
           console.warn("[dashboard] история не загрузилась:", e);
           setState((st) =>
             st.epoch === epoch ? { ...st, loading: false, error: errorText(e) } : st,

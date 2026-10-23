@@ -140,15 +140,11 @@ export default function App() {
     [chartShown, history.chunks],
   );
 
-  // Временно, только в dev: догрузка из консоли/CDP до края графика (T6)
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    (window as unknown as { __history?: unknown }).__history = {
-      loadMore: () => chartData && history.loadMore(chartData.candles[0].t),
-      state: history,
-      data: chartData,
-    };
-  }, [chartData, history]);
+  // Кусок левее самой ранней показанной свечи
+  const { loadMore } = history;
+  const needMore = useCallback(() => {
+    if (chartData?.candles.length) loadMore(chartData.candles[0].t);
+  }, [chartData, loadMore]);
 
   const viewShown =
     view && view.coinId === activeCoin.id && view.interval === interval
@@ -216,6 +212,8 @@ export default function App() {
               onRangeChange={setRange}
               onIntervalChange={changeInterval}
               loading={chartLoading}
+              onNeedMore={needMore}
+              complete={history.complete}
             />
           </TopRow>
 
