@@ -59,6 +59,20 @@ const Title = styled.div`
   margin-bottom: 4px;
 `;
 
+// Заголовок и подпись видимого отрезка в одну строку
+const Heading = styled.div`
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+`;
+
+// «от – до» крайних видимых свечей (PRD крит. 10)
+const VisibleSpan = styled.span`
+  font-family: ${({ theme }) => theme.font.mono};
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  color: ${({ theme }) => theme.colors.muted};
+`;
+
 // Легенда — значения свечи под перекрестием (иначе последней), как строка
 // над графиком в TradingView. min-height — строка не прыгает без данных
 const Legend = styled.div`
@@ -177,8 +191,13 @@ export const PriceChart = ({
 }: Props) => {
   const theme = useTheme();
   const [hover, setHover] = useState<HoverPoint | null>(null);
-  // Дата в подписи перекрестия — на окнах длиннее суток
-  const withDate = RANGE_MS[range] > RANGE_MS["24h"];
+  // Видимый отрезок графика (мс): после прокрутки и зума он, а не кнопка
+  // периода, решает, нужна ли дата в подписях
+  const [visible, setVisible] = useState<{ from: number; to: number } | null>(null);
+  // Дата в подписи перекрестия и легенды — если на экране больше суток.
+  // Пока отрезок неизвестен — по кнопке периода, как раньше
+  const span = visible ? visible.to - visible.from : RANGE_MS[range];
+  const withDate = span > RANGE_MS["24h"];
   // Наведённая свеча ищется в текущих данных по ключу и времени: после смены
   // монеты её нет — легенда показывает последнюю; после опроса — та же
   // свеча из новых данных, перекрестие и числа не расходятся
@@ -193,7 +212,16 @@ export const PriceChart = ({
   return (
     <Container>
       <Controls>
-        <Title>{coin.market} — цена / EMA / BB</Title>
+        <Heading>
+          <Title>{coin.market} — цена / EMA / BB</Title>
+          {/* Дата — всегда: «09:00 – 21:00» в прошлом не говорит, какой день */}
+          {data && visible && (
+            <VisibleSpan>
+              {formatCandleTime(visible.from, interval, true)} –{" "}
+              {formatCandleTime(visible.to, interval, true)}
+            </VisibleSpan>
+          )}
+        </Heading>
         <Selectors>
           <SelectorLabel>свеча</SelectorLabel>
           <RangeTabs>
@@ -268,6 +296,7 @@ export const PriceChart = ({
           onHover={setHover}
           onNeedMore={onNeedMore}
           complete={complete}
+          onVisibleRange={setVisible}
         />
         {loading && (
           <ChartSkeleton>

@@ -46,6 +46,8 @@ interface Props {
   // (кусок в пути, начало истории, потолок)
   onNeedMore: () => void;
   complete: boolean; // левее свечей у Binance нет — дальше не листается
+  // Время крайних видимых свечей, мс; null — данных нет
+  onVisibleRange: (r: { from: number; to: number } | null) => void;
 }
 
 const HEIGHT = 360;
@@ -97,6 +99,7 @@ export const CandleChart = ({
   onHover,
   onNeedMore,
   complete,
+  onVisibleRange,
 }: Props) => {
   const theme = useTheme();
   const boxRef = useRef<HTMLDivElement>(null);
@@ -205,9 +208,11 @@ export const CandleChart = ({
   // коммитом и эффектами ref не закрывает — событие там зовёт onNeedMore
   // прошлого рендера; дубль запроса гасит lastRef в useChartHistory
   const needMoreRef = useRef(onNeedMore);
+  const visibleRef = useRef(onVisibleRange);
   useEffect(() => {
     needMoreRef.current = onNeedMore;
-  }, [onNeedMore]);
+    visibleRef.current = onVisibleRange;
+  }, [onNeedMore, onVisibleRange]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -298,6 +303,19 @@ export const CandleChart = ({
     };
     ts.subscribeVisibleLogicalRangeChange(handler);
     return () => ts.unsubscribeVisibleLogicalRangeChange(handler);
+  }, [theme]);
+
+  // Видимый отрезок → подпись «от – до» над графиком и дата в подписях
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const ts = chart.timeScale();
+    const handler = (r: { from: Time; to: Time } | null) =>
+      visibleRef.current(
+        r ? { from: (r.from as UTCTimestamp) * 1000, to: (r.to as UTCTimestamp) * 1000 } : null,
+      );
+    ts.subscribeVisibleTimeRangeChange(handler);
+    return () => ts.unsubscribeVisibleTimeRangeChange(handler);
   }, [theme]);
 
   // Перекрестие → свеча по времени открытия. На разрыве (пустая точка) и вне
