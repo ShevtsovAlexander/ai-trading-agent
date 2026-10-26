@@ -43,7 +43,7 @@ const CACHE_SIZE = 50;
 export const CLOSE_MARGIN_MS = 5000;
 // 80 % минутного лимита Binance (6000): выше — догрузка истории ждёт,
 // основное окно и карточку не режем (план TASK-0006, trade-off 5)
-export const WEIGHT_GUARD = 4800;
+export const WEIGHT_THROTTLE = 4800;
 const WEIGHT_LIMIT = 6000;
 const MINUTE_MS = 60_000;
 // Binance отказал по лимиту: 429 — превышен вес, 418 — бан IP за повторы
@@ -153,7 +153,8 @@ export class MarketDataService {
 
   // Свечи левее before (HISTORY_CHUNK) с рядами по ним — тем же расчётом,
   // что основное окно: свой WARMUP слева, поэтому значения = длинный ряд.
-  // Страж веса режет только историю; кэшированный кусок отдаётся и при нём.
+  // Ограничитель запросов режет только историю; кэшированный кусок отдаётся
+  // и при нём.
   async getHistory(
     coinId: string,
     interval: string,
@@ -174,7 +175,7 @@ export class MarketDataService {
     const cached = this.historyCache.get(key);
     if (cached) return cached;
 
-    if (this.weightExhausted()) {
+    if (this.historyThrottled()) {
       throw new HttpException(LIMIT_MESSAGE, HttpStatus.TOO_MANY_REQUESTS);
     }
 
@@ -215,10 +216,10 @@ export class MarketDataService {
 
   private noteWeight(weight: number | null): void {
     if (weight === null) {
-      // Без заголовка страж выключен — сказать об этом один раз
+      // Без заголовка ограничитель выключен — сказать об этом один раз
       if (!this.weightMissingWarned) {
         this.logger.warn(
-          'Binance не прислал x-mbx-used-weight-1m — страж веса выключен',
+          'Binance не прислал x-mbx-used-weight-1m — ограничитель запросов выключен',
         );
         this.weightMissingWarned = true;
       }
@@ -230,12 +231,12 @@ export class MarketDataService {
 
   // Вес у порога в текущей минуте UTC. Binance обнуляет вес с началом
   // минуты — замер прошлой минуты уже не говорит ничего.
-  weightExhausted(): boolean {
+  historyThrottled(): boolean {
     if (!this.lastWeight) return false;
     const sameMinute =
       Math.floor(this.lastWeight.at / MINUTE_MS) ===
       Math.floor(this.clock() / MINUTE_MS);
-    return sameMinute && this.lastWeight.weight >= WEIGHT_GUARD;
+    return sameMinute && this.lastWeight.weight >= WEIGHT_THROTTLE;
   }
 
   // Последняя закрытая — по часам: свеча, открытая на
@@ -245,8 +246,8 @@ export class MarketDataService {
     return Math.floor(now / step) * step - step;
   }
 
-  // Закрытые свечи [start, end] + вес в страж. Отказ Binance по лимиту
-  // (429/418) взводит страж до конца минуты; история отвечает на него 429,
+  // Закрытые свечи [start, end] + вес в ограничитель. Отказ Binance по
+  // лимиту (429/418) включает ограничитель до конца минуты; история отвечает на него 429,
   // основное окно — 502, как на любую ошибку Binance.
   private async fetch(
     coinId: string,
@@ -255,7 +256,7 @@ export class MarketDataService {
     end: number,
     history = false,
   ): Promise<Candle[]> {
-    // Окно до эпохи (before = 0): запроса нет — и веса нет, страж не трогаем
+    // Окно до эпохи (before = 0): запроса нет — и веса нет, ограничитель не трогаем
     if (start > end) return [];
     try {
       const fetched = await fetchClosedCandles(

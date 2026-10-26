@@ -21,7 +21,7 @@ export class MarketController {
   }
 
   // Кусок истории левее before (openTime, мс) с рядами индикаторов.
-  // 400 — невалидный before; 429 — страж веса Binance; 502 — Binance.
+  // 400 — невалидный before; 429 — ограничитель запросов к Binance; 502 — Binance.
   @Get('candles/:coinId/history')
   getHistory(
     @Param('coinId') coinId: string,

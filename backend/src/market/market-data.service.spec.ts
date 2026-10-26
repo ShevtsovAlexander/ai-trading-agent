@@ -10,7 +10,7 @@ import * as ti from 'technicalindicators';
 import {
   CLOSE_MARGIN_MS,
   MarketDataService,
-  WEIGHT_GUARD,
+  WEIGHT_THROTTLE,
 } from './market-data.service';
 import {
   HISTORY_CHUNK,
@@ -513,9 +513,9 @@ describe('MarketDataService', () => {
     });
 
     // Вес кормит сам getHistory: основное окно не вызывается вовсе
-    it(`кусок с весом ≥ ${WEIGHT_GUARD} — следующий кусок 429 без запроса; в новой минуте — снова пускает`, async () => {
+    it(`кусок с весом ≥ ${WEIGHT_THROTTLE} — следующий кусок 429 без запроса; в новой минуте — снова пускает`, async () => {
       const { service, calls, state, advance } = longService({
-        weight: WEIGHT_GUARD,
+        weight: WEIGHT_THROTTLE,
         start: Math.floor(LONG_NOW / 60_000) * 60_000 + 1000,
       });
       await service.getHistory('bitcoin', '5m', at(3000));
@@ -529,7 +529,7 @@ describe('MarketDataService', () => {
         HttpStatus.TOO_MANY_REQUESTS,
       );
       expect(calls).toHaveLength(fetched);
-      // кэшированный кусок страж не режет
+      // кэшированный кусок ограничитель не режет
       await service.getHistory('bitcoin', '5m', at(3000));
       expect(calls).toHaveLength(fetched);
 
@@ -539,8 +539,8 @@ describe('MarketDataService', () => {
       expect(calls.length).toBeGreaterThan(fetched);
     });
 
-    it('вес ниже стража — пускает', async () => {
-      const { service, calls } = longService({ weight: WEIGHT_GUARD - 1 });
+    it('вес ниже порога ограничителя — пускает', async () => {
+      const { service, calls } = longService({ weight: WEIGHT_THROTTLE - 1 });
       await service.getHistory('bitcoin', '5m', at(3000));
       const fetched = calls.length;
       await service.getHistory('bitcoin', '5m', at(1500));
@@ -548,7 +548,7 @@ describe('MarketDataService', () => {
     });
 
     it.each([429, 418])(
-      'Binance ответил %i — 429, страж взведён до конца минуты',
+      'Binance ответил %i — 429, ограничитель включён до конца минуты',
       async (status) => {
         const { service, calls, state, advance } = longService({
           failStatus: status,
@@ -602,7 +602,7 @@ describe('MarketDataService', () => {
       await service.getHistory('bitcoin', '5m', at(3000));
       await service.getHistory('bitcoin', '5m', at(1500));
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(service.weightExhausted()).toBe(false);
+      expect(service.historyThrottled()).toBe(false);
     });
   });
 });
