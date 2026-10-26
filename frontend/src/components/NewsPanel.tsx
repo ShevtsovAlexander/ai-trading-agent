@@ -1,12 +1,8 @@
 import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { getNews, getDigest, type NewsItem, type Digest } from '../api/news';
-
-const SOURCE_COLORS: Record<string, string> = {
-    Cointelegraph: '#fabc2c',
-    Coindesk: '#f7a600',
-    Decrypt: '#a78bfa',
-};
+import { useDelayedFlag } from '../hooks/useDelayedFlag';
+import { Skeleton } from './Skeleton';
 
 // Категории, которые метим как регуляторно-значимые (визуальный акцент)
 const SIGNAL_CATEGORIES = new Set(['policy', 'regulation', 'finance']);
@@ -15,6 +11,8 @@ export const NewsPanel = () => {
     const [news, setNews] = useState<NewsItem[]>([]);
     const [digest, setDigest] = useState<Digest | null>(null);
     const [loading, setLoading] = useState(true);
+    // Скелетон — через 300 мс, как на «Рынке» (TASK-0005)
+    const skeleton = useDelayedFlag(loading, 300);
 
     useEffect(() => {
         let cancelled = false;
@@ -39,9 +37,28 @@ export const NewsPanel = () => {
 
     if (loading) {
         return (
-            <Container>
+            <Container aria-busy="true">
                 <Title>Лента новостей</Title>
-                <Muted>Загрузка…</Muted>
+                {skeleton && (
+                    <>
+                        {/* Дайджест — одной плашкой: внутри DigestCard плашки
+                            сливались бы с его фоном того же тона */}
+                        <SkeletonDigest>
+                            <Skeleton $h="84px" />
+                        </SkeletonDigest>
+                        <List>
+                            {Array.from({ length: 5 }, (_, i) => (
+                                <SkeletonCard key={i}>
+                                    <Skeleton $w="64px" $h="64px" />
+                                    <Content>
+                                        <Skeleton $w="420px" $h="14px" />
+                                        <Skeleton $w="160px" $h="10px" />
+                                    </Content>
+                                </SkeletonCard>
+                            ))}
+                        </List>
+                    </>
+                )}
             </Container>
         );
     }
@@ -74,7 +91,7 @@ export const NewsPanel = () => {
                         <Content>
                             <Headline>{item.title}</Headline>
                             <Meta>
-                                <Source $color={SOURCE_COLORS[item.source] ?? '#888'}>
+                                <Source>
                                     {item.source}
                                 </Source>
                                 {item.category &&
@@ -102,27 +119,26 @@ const formatTime = (iso: string): string => {
 };
 
 const Container = styled.div`
-  background: ${({ theme }) => theme.colors.surface};
-  border: 1px solid ${({ theme }) => theme.colors.border};
+  background: ${({ theme }) => theme.colors.surfaceCard};
+  border: 1px solid ${({ theme }) => theme.colors.hairline};
   border-radius: ${({ theme }) => theme.radius.lg};
   padding: 16px;
 `;
 
+// caption-uppercase системы (DESIGN.md «Typography»)
 const Title = styled.div`
-  font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  color: ${({ theme }) => theme.colors.muted};
   margin-bottom: 12px;
 `;
 
+// Без градиента и теней: глубина — контрастом поверхностей (DESIGN.md «Elevation»)
 const DigestCard = styled.div`
-  background: linear-gradient(
-    135deg,
-    ${({ theme }) => theme.colors.purple}18,
-    ${({ theme }) => theme.colors.surfaceAlt}
-  );
-  border: 1px solid ${({ theme }) => theme.colors.purple}33;
+  background: ${({ theme }) => theme.colors.surfaceElevated};
+  border: 1px solid ${({ theme }) => theme.colors.hairline};
   border-radius: ${({ theme }) => theme.radius.md};
   padding: 14px;
   margin-bottom: 12px;
@@ -140,26 +156,30 @@ const DigestLabel = styled.span`
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: ${({ theme }) => theme.colors.purple};
+  color: ${({ theme }) => theme.colors.primary};
 `;
 
 const DigestMeta = styled.span`
   font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  color: ${({ theme }) => theme.colors.muted};
 `;
 
 const DigestText = styled.p`
   font-size: ${({ theme }) => theme.fontSize.md};
-  color: ${({ theme }) => theme.colors.textSecondary};
+  color: ${({ theme }) => theme.colors.body};
   line-height: 1.55;
   white-space: pre-line; /* LLM может вернуть переносы по темам */
 `;
 
-const Muted = styled.div`
-  color: ${({ theme }) => theme.colors.textMuted};
-  font-size: ${({ theme }) => theme.fontSize.md};
-  padding: 24px 0;
-  text-align: center;
+const SkeletonDigest = styled.div`
+  margin-bottom: 12px;
+`;
+
+// Строка ленты на время загрузки — те же отступы, что у Card
+const SkeletonCard = styled.div`
+  display: flex;
+  gap: 12px;
+  padding: 10px;
 `;
 
 const List = styled.div`
@@ -171,7 +191,7 @@ const List = styled.div`
 
   &::-webkit-scrollbar { width: 4px; }
   &::-webkit-scrollbar-thumb {
-    background: ${({ theme }) => theme.colors.border};
+    background: ${({ theme }) => theme.colors.hairlineStrong};
     border-radius: 99px;
   }
 `;
@@ -184,7 +204,7 @@ const Card = styled.a`
   text-decoration: none;
   transition: background 0.15s;
 
-  &:hover { background: ${({ theme }) => theme.colors.surfaceAlt}; }
+  &:hover { background: ${({ theme }) => theme.colors.surfaceElevated}; }
 `;
 
 const Thumb = styled.img`
@@ -204,7 +224,7 @@ const Content = styled.div`
 
 const Headline = styled.div`
   font-size: ${({ theme }) => theme.fontSize.md};
-  color: ${({ theme }) => theme.colors.text};
+  color: ${({ theme }) => theme.colors.bodyStrong};
   line-height: 1.4;
 `;
 
@@ -215,28 +235,29 @@ const Meta = styled.div`
   flex-wrap: wrap;
 `;
 
-const Source = styled.span<{ $color: string }>`
+// Источник — монохромом, без второго брендового цвета (DESIGN.md «Don't»)
+const Source = styled.span`
   font-size: ${({ theme }) => theme.fontSize.xs};
   font-weight: 600;
-  color: ${({ $color }) => $color};
+  color: ${({ theme }) => theme.colors.muted};
 `;
 
 const Category = styled.span`
   font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  color: ${({ theme }) => theme.colors.mutedSoft};
 `;
 
 const SignalTag = styled.span`
   font-size: ${({ theme }) => theme.fontSize.xs};
   font-weight: 600;
-  color: #f59e0b;
-  background: #f59e0b22;
+  color: ${({ theme }) => theme.colors.warning};
+  background: ${({ theme }) => `${theme.colors.warning}1a`};
   padding: 1px 6px;
-  border-radius: ${({ theme }) => theme.radius.sm};
+  border-radius: ${({ theme }) => theme.radius.xs};
 `;
 
 const Time = styled.span`
   font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  color: ${({ theme }) => theme.colors.mutedSoft};
   margin-left: auto;
 `;

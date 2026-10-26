@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { Interval, MarketSeries, MarketView, Range } from "../types/market.ts";
+import type { HistoryChunk, Interval, MarketSeries, MarketView, Range } from "../types/market.ts";
 
 // Свечи диапазона + ряды индикаторов. Недопустимая комбинация — 400,
 // Binance недоступен — 502.
@@ -10,6 +10,19 @@ export const getCandles = async (
 ): Promise<MarketSeries> => {
     const response = await api.get<MarketSeries>(`/market/candles/${coinId}`, {
         params: { interval, range },
+    });
+    return response.data;
+};
+
+// Кусок истории левее before (openTime, мс). Невалидный before — 400,
+// лимит Binance — 429, Binance недоступен — 502.
+export const getHistory = async (
+    coinId: string,
+    interval: Interval,
+    before: number
+): Promise<HistoryChunk> => {
+    const response = await api.get<HistoryChunk>(`/market/candles/${coinId}/history`, {
+        params: { interval, before },
     });
     return response.data;
 };

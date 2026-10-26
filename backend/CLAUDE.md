@@ -36,8 +36,8 @@ src/
 │   ├── backtest.service.ts       — свечи Binance (свой fetchCandles), симуляция стратегии на истории
 │   └── backtest.types.ts
 ├── binance/
-│   ├── klines.ts                 — fetchClosedCandles: закрытые свечи постранично по 1000, незакрытая отброшена
-│   └── klines.spec.ts            — 3 теста на честном фейке HTTP
+│   ├── klines.ts                 — fetchClosedCandles: закрытые свечи постранично по 1000, незакрытая отброшена; вес из заголовка x-mbx-used-weight-1m
+│   └── klines.spec.ts            — 5 тестов на честном фейке HTTP
 ├── digest/
 │   ├── digest.module.ts
 │   ├── digest.service.ts         — AI-дайджест ленты, кэш по хешу набора id
@@ -46,11 +46,11 @@ src/
 │   ├── indicators.ts             — calcEMA/RSI/MACD/BB/SMA/Trend: чистые функции, общие для дашборда и бэктеста
 │   └── indicators.spec.ts        — 11 тестов: формулы против technicalindicators
 ├── market/
-│   ├── market.controller.ts      — GET /market/candles/:coinId, GET /market/view/:coinId
+│   ├── market.controller.ts      — GET /market/candles/:coinId, /market/candles/:coinId/history, /market/view/:coinId
 │   ├── market.module.ts
-│   ├── market.types.ts           — Interval/Range, границы, isAllowed, COINS, SeriesPoint, MarketView (зеркало — frontend/src/types/market.ts)
-│   ├── market-data.service.ts    — свечи → ряды индикаторов, последняя свеча, кэш до закрытия следующей
-│   ├── market-data.service.spec.ts — 8 тестов: ряды против technicalindicators, кэш, 400/502
+│   ├── market.types.ts           — Interval/Range, границы, isAllowed, COINS, SeriesPoint, MarketView, HistoryChunk/HISTORY_CHUNK (зеркало — frontend/src/types/market.ts)
+│   ├── market-data.service.ts    — свечи → ряды индикаторов, последняя свеча, кэш до закрытия следующей; куски истории, ограничитель запросов
+│   ├── market-data.service.spec.ts — 21 тест: ряды против technicalindicators, кэш, 400/502; куски истории, стыки, ограничитель 429
 │   ├── market.comment.ts         — AI-комментарий к MarketView, кэш по монете+интервалу
 │   └── market.comment.spec.ts    — 9 тестов: кэш, fallback'и, строки промпта
 ├── news/
@@ -70,6 +70,7 @@ src/
 ## Все Endpoints
 - GET  /health
 - GET  /market/candles/:coinId?interval=5m&range=24h — свечи диапазона + ряды индикаторов
+- GET  /market/candles/:coinId/history?interval=5m&before=<мс> — кусок истории левее before (TASK-0006)
 - GET  /market/view/:coinId?interval=5m              — последняя закрытая свеча интервала + aiComment
 - GET  /news                              — крипто-новости из RSS (Cointelegraph, Coindesk, Decrypt)
 - GET  /news/digest                       — AI-дайджест ленты (кэш по хешу id, генерится при обновлении ленты)
@@ -89,6 +90,10 @@ src/
 - `502 { message: 'Binance недоступен' }` — запрос к Binance упал;
   `502 { message: 'Binance не отдал свечей' }` — `view` получил меньше 2
   свечей (сразу после остановки биржи).
+- `/history`: `400` — `before` не число, не кратен интервалу или позже
+  последней закрытой свечи (без запроса к Binance); `429 { message: 'Лимит
+  Binance — история догрузится через минуту' }` — ограничитель запросов; `502` — как
+  выше.
 
 ## Формы ответов
 `/market/candles` → `{ coinId, market, interval, range, candles, series }`,
@@ -98,6 +103,11 @@ src/
   macdHistogram, bbUpper, bbMiddle, bbLower, bbBandwidth }` — индикаторы на
   закрытии свечи; `null` — периоду не хватило свечей; округление до 2
   знаков (`close` — как у Binance); `bbBandwidth` — в процентах
+
+`/market/candles/:coinId/history` → `HistoryChunk { coinId, market, interval,
+before, candles, series, complete }`: свечи `t < before` (≤ `HISTORY_CHUNK` =
+1500, по возрастанию), ряды той же формы; `complete: true` — левее у Binance
+свечей нет (листинг пары).
 
 `/market/view` → `MarketView { coinId, market, interval, closedAt, price,
 previousPrice, ma5, trend, latest, recent, aiComment }`: `closedAt` —
@@ -122,6 +132,26 @@ closeTime последней закрытой свечи; `latest` — её `Ser
   ещё не отдал только что закрытую свечу — результат не кэшируется.
 - Дыры самой Binance (остановки биржи) отдаются как есть — шаг `t` больше
   интервала, фронт рвёт линии.
+
+## История и ограничитель запросов к Binance (TASK-0006)
+- `getHistory(coin, interval, before)` — окно `HISTORY_CHUNK + WARMUP`
+  (1500 + 500) свечей до `before`, ряды тем же `toSeries`, разогрев
+  отрезан: значения куска = длинный ряд, включая его первую свечу (jest
+  против `technicalindicators`; живая сверка 85 668 значений, TASK-0006.9).
+  Стык: последняя свеча куска = `before − шаг`, дублей нет.
+- `complete` — в окне с разогревом нет свечей раньше начала куска (листинг
+  внутри окна или пусто): BTC 1д — 2017-08-17, SOL — 2020-08-11.
+- Кэш кусков — по `монета|интервал|before`, 50 записей, FIFO; кусок без
+  правой свечи (сбой, листинг, остановка биржи) не кэшируется.
+- **Ограничитель запросов** — тормоз, чтобы Binance не забанил IP (вес —
+  его счётчик нагрузки, лимит 6000 в минуту). `fetchClosedCandles` отдаёт
+  вес из заголовка `x-mbx-used-weight-1m` последнего ответа; сервис помнит
+  его с минутой. Вес ≥ `WEIGHT_THROTTLE` (4800 = 80 % лимита) в текущей
+  минуте UTC — `getHistory` отвечает 429 без запроса к Binance;
+  кэшированный кусок отдаётся и при нём. Отказ Binance 429/418 включает
+  ограничитель до конца минуты. Основное окно и карточку ограничитель не
+  режет (на отказ Binance — 502, как раньше). Нет заголовка — ограничитель
+  выключен, `logger.warn` один раз.
 
 ## AI-комментарий (market.comment.ts)
 - `describeView(view)` описывает обстановку на последней закрытой свече
@@ -155,6 +185,10 @@ closeTime последней закрытой свечи; `latest` — её `Ser
   MACD-гистограммы назван «усилением нисходящего давления». Оракула у
   текста нет — проверка живой сверкой.
 - `backtest.service.ts` держит свой `fetchCandles` — дубль `binance/klines.ts`.
+- Простой Binance длиннее окна куска с разогревом (2000 свечей: ≈ 7 дней
+  на 5м, ≈ 21 день на 15м) даст `complete: true` и метку «начало истории»
+  с датой после простоя. У BTC/ETH/SOL таких простоев не замечено, по
+  данным не проверялось (критик TASK-0006.8).
 
 ## Переменные окружения (.env)
 GROQ_API_KEY=...
@@ -177,16 +211,20 @@ npm run start:dev
 
 ## Тесты
 npm run test
-31 тест, только с внешним оракулом:
+46 тестов, только с внешним оракулом:
 - `indicators/indicators.spec.ts` — 11: EMA(9/21/26), RSI(14) на ряде и трёх
   краевых, MACD, BB(20), ширина BB, SMA(5) против technicalindicators.
-- `binance/klines.spec.ts` — 3: пагинация 2300 свечей за 3 запроса,
-  отсечение незакрытой свечи, защита от «страница не сдвинулась»; фейк HTTP
-  честно применяет `startTime`/`endTime`/`limit`.
-- `market/market-data.service.spec.ts` — 8: все поля рядов по всем точкам
+- `binance/klines.spec.ts` — 5: пагинация 2300 свечей за 3 запроса,
+  отсечение незакрытой свечи, защита от «страница не сдвинулась», вес из
+  заголовка последнего ответа и `null` без заголовка; фейк HTTP честно
+  применяет `startTime`/`endTime`/`limit`.
+- `market/market-data.service.spec.ts` — 21: все поля рядов по всем точкам
   против technicalindicators на тех же close, разогрев не утёк, кэш до
   закрытия свечи (счётчик запросов), запас на часы, 1д с крупными ценами
-  (`latest` = последняя точка графика), 400/502.
+  (`latest` = последняя точка графика), 400/502; куски истории — ряды =
+  длинный ряд с первой свечи куска, стыки без дыр и дублей, листинг →
+  `complete`, 400 на `before`, кэш, ограничитель 429 (по весу и по отказу
+  Binance), предупреждение без заголовка.
 - `market/market.comment.spec.ts` — 9: кэш и fallback'и при отказе модели,
   точные строки промпта (изменения — арифметика), разные интервалы — разные
   записи кэша.

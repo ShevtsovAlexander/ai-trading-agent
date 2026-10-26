@@ -76,5 +76,5 @@ implement    → одна задача за вызов, СТОП на ревью
 ## Стек кратко
 
 - Backend: NestJS 11, Prisma 7 + PostgreSQL, Groq (LLM), @nestjs/schedule (cron новостей)
-- Frontend: React 19, TypeScript, Vite, styled-components, recharts
+- Frontend: React 19, TypeScript, Vite, styled-components, lightweight-charts
 - Внешние данные: Binance (свечи по запросу), RSS (Cointelegraph/Coindesk/Decrypt)

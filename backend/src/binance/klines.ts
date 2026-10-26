@@ -5,6 +5,13 @@ import { Candle } from '../market/market.types';
 const BINANCE_KLINES_URL = 'https://api.binance.com/api/v3/klines';
 const PAGE_SIZE = 1000; // максимум klines за запрос
 const REQUEST_DELAY_MS = 200;
+// Вес IP за текущую минуту по счёту Binance (лимит 6000/мин)
+const WEIGHT_HEADER = 'x-mbx-used-weight-1m';
+
+export interface ClosedCandles {
+  candles: Candle[];
+  usedWeight: number | null; // из заголовка последнего ответа; нет заголовка — null
+}
 
 // Закрытые свечи symbol/interval с openTime в [startTime, endTime], по
 // возрастанию времени. Постранично вперёд: следующая страница — с openTime
@@ -14,7 +21,8 @@ const REQUEST_DELAY_MS = 200;
 // относительно Binance (замер 2026-10-19: отстают на ~0.3 с — безопасная
 // сторона). Дыры самой Binance (остановки биржи, напр. 2023-03-24, 85 мин)
 // отдаём как есть, без заполнения: шаг t тогда больше интервала.
-// Ошибки Binance не ловим — их переводит в ответ вызывающий.
+// Ошибки Binance не ловим — их переводит в ответ вызывающий. Вес — из
+// последнего ответа: он самый свежий и уже включает все страницы вызова.
 export async function fetchClosedCandles(
   http: HttpService,
   symbol: string,
@@ -22,8 +30,9 @@ export async function fetchClosedCandles(
   startTime: number,
   endTime: number,
   now = Date.now(),
-): Promise<Candle[]> {
+): Promise<ClosedCandles> {
   const result: Candle[] = [];
+  let usedWeight: number | null = null;
   let from = startTime;
 
   while (from <= endTime) {
@@ -38,6 +47,9 @@ export async function fetchClosedCandles(
         },
       }),
     );
+
+    const header = Number(response.headers?.[WEIGHT_HEADER]);
+    usedWeight = Number.isFinite(header) && header > 0 ? header : null;
 
     const batch = response.data;
     if (batch.length === 0) break;
@@ -67,5 +79,5 @@ export async function fetchClosedCandles(
     await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS));
   }
 
-  return result;
+  return { candles: result, usedWeight };
 }

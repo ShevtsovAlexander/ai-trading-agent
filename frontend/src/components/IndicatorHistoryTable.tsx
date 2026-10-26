@@ -1,12 +1,14 @@
-import styled from "styled-components";
+import styled, { useTheme, type DefaultTheme } from "styled-components";
 import type { Interval, SeriesPoint } from "../types/market";
 import { formatCandleTime } from "../utils/candleTime";
+import { Skeleton } from "./Skeleton";
 
 // series — ряды индикаторов текущего графика (свечи интервала)
 interface Props {
   coinId: string;
   interval: Interval;
   series: SeriesPoint[];
+  loading?: boolean; // данные в пути (TASK-0005) — строки-плашки вместо «Нет данных»
 }
 
 const ROWS = 50;
@@ -17,17 +19,11 @@ const COIN_LABELS: Record<string, string> = {
   solana: "SOL",
 };
 
-const COIN_COLORS: Record<string, string> = {
-  bitcoin: "#F7931A",
-  ethereum: "#627EEA",
-  solana: "#9945FF",
-};
-
 // --- styled ---
 
 const Container = styled.div`
-  background: ${({ theme }) => theme.colors.surface};
-  border: 1px solid ${({ theme }) => theme.colors.border};
+  background: ${({ theme }) => theme.colors.surfaceCard};
+  border: 1px solid ${({ theme }) => theme.colors.hairline};
   border-radius: ${({ theme }) => theme.radius.lg};
   position: relative;
 `;
@@ -41,11 +37,13 @@ const Inner = styled.div`
   overflow: auto;
 `;
 
+// caption-uppercase системы (DESIGN.md «Typography»)
 const Title = styled.div`
-  font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  color: ${({ theme }) => theme.colors.muted};
   margin-bottom: 12px;
 `;
 
@@ -61,7 +59,7 @@ const Row = styled.div`
   grid-template-columns: 80px 100px 60px 1fr;
   gap: 8px;
   padding: 8px 0;
-  border-bottom: 1px solid ${({ theme }) => theme.colors.borderLight};
+  border-bottom: 1px solid ${({ theme }) => theme.colors.hairline};
   align-items: center;
 
   &:last-child {
@@ -75,56 +73,48 @@ const HeadRow = styled(Row)`
 
 const Th = styled.span`
   font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  color: ${({ theme }) => theme.colors.muted};
   text-transform: uppercase;
 `;
 
+// Числа и время — моноширинным: разряды в колонке стоят друг под другом
 const Td = styled.span`
+  font-family: ${({ theme }) => theme.font.mono};
   font-size: ${({ theme }) => theme.fontSize.md};
-  color: ${({ theme }) => theme.colors.textSecondary};
+  color: ${({ theme }) => theme.colors.body};
 `;
 
-const TdColored = styled(Td)<{ color?: string }>`
-  color: ${({ color, theme }) => color ?? theme.colors.textSecondary};
+const TdColored = styled(Td)<{ $color?: string }>`
+  color: ${({ $color, theme }) => $color ?? theme.colors.body};
 `;
 
+// Монета — монохромом, без цветной точки (план, вопрос 2)
 const CoinCell = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 6px;
   font-size: ${({ theme }) => theme.fontSize.md};
-  color: ${({ theme }) => theme.colors.text};
-`;
-
-const Dot = styled.span<{ color: string }>`
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: ${({ color }) => color};
-  display: inline-block;
-  flex-shrink: 0;
+  color: ${({ theme }) => theme.colors.ink};
 `;
 
 const Empty = styled.div`
   font-size: ${({ theme }) => theme.fontSize.md};
-  color: ${({ theme }) => theme.colors.textMuted};
+  color: ${({ theme }) => theme.colors.muted};
   text-align: center;
   padding: 24px 0;
 `;
 
 // --- helpers ---
 
-const rsiColor = (rsi: number | null): string | undefined => {
+const rsiColor = (rsi: number | null, theme: DefaultTheme): string | undefined => {
   if (rsi == null) return undefined;
-  if (rsi < 35) return "#4ade80";
-  if (rsi > 65) return "#f87171";
+  if (rsi < 35) return theme.colors.up;
+  if (rsi > 65) return theme.colors.down;
   return undefined;
 };
 
 
 // --- component ---
 
-export const IndicatorHistoryTable = ({ coinId, interval, series }: Props) => {
+export const IndicatorHistoryTable = ({ coinId, interval, series, loading = false }: Props) => {
+  const theme = useTheme();
   const rows = series.slice(-ROWS).reverse(); // новые сверху
   // Время открытия свечи, как в тултипе графика. Дата — если строки
   // захватывают больше одних суток: иначе 23:55 и 00:00 не отличить
@@ -134,7 +124,7 @@ export const IndicatorHistoryTable = ({ coinId, interval, series }: Props) => {
       new Date(rows[rows.length - 1].t).toDateString();
 
   return (
-    <Container>
+    <Container aria-busy={loading}>
       <Inner>
         <Title>История индикаторов</Title>
         <Table>
@@ -145,18 +135,27 @@ export const IndicatorHistoryTable = ({ coinId, interval, series }: Props) => {
             <Th>Время</Th>
           </HeadRow>
 
-          {rows.length === 0 && <Empty>Нет данных</Empty>}
+          {loading &&
+            Array.from({ length: 8 }, (_, i) => (
+              <Row key={i}>
+                <Skeleton $w="36px" $h="13px" />
+                <Skeleton $w="80px" $h="13px" />
+                <Skeleton $w="32px" $h="13px" />
+                <Skeleton $w="44px" $h="13px" />
+              </Row>
+            ))}
+
+          {!loading && rows.length === 0 && <Empty>Нет данных</Empty>}
 
           {rows.map((d) => (
             <Row key={d.t}>
               <CoinCell>
-                <Dot color={COIN_COLORS[coinId] ?? "#888"} />
                 {COIN_LABELS[coinId] ?? coinId.toUpperCase()}
               </CoinCell>
 
               <Td>${d.close.toLocaleString()}</Td>
 
-              <TdColored color={rsiColor(d.rsi)}>
+              <TdColored $color={rsiColor(d.rsi, theme)}>
                 {d.rsi != null ? d.rsi.toFixed(1) : "—"}
               </TdColored>
 

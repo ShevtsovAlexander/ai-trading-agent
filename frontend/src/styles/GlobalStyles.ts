@@ -8,9 +8,11 @@ export const GlobalStyles = createGlobalStyle`
   }
 
   body {
-    background: #0d0d0d;
-    color: #ffffff;
-    font-family: Inter, -apple-system, sans-serif;
+    background: ${({ theme }) => theme.colors.canvas};
+    color: ${({ theme }) => theme.colors.body};
+    font-family: ${({ theme }) => theme.font.sans};
+    /* Цифры одной ширины — столбцы цен и индикаторов не пляшут */
+    font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
   }
 

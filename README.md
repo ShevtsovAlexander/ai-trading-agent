@@ -13,7 +13,7 @@
 - React 19 + TypeScript
 - Vite
 - styled-components
-- recharts
+- lightweight-charts — график свечей
 
 **Backend**
 - NestJS 11 (TypeScript)

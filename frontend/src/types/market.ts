@@ -108,6 +108,21 @@ export interface MarketSeries {
     series: SeriesPoint[];
 }
 
+// Свечей в куске истории (с разогревом бэкенда — 2 страницы Binance)
+export const HISTORY_CHUNK = 1500;
+
+// GET /market/candles/:coinId/history — кусок левее before, ряды тем же
+// расчётом, что MarketSeries; series[i].t === candles[i].t
+export interface HistoryChunk {
+    coinId: string;
+    market: string;
+    interval: Interval;
+    before: number; // openTime, исключительно: все свечи t < before
+    candles: Candle[]; // ≤ HISTORY_CHUNK, по возрастанию
+    series: SeriesPoint[];
+    complete: boolean; // true — левее свечей у Binance нет (листинг пары)
+}
+
 // GET /market/view/:coinId — последняя закрытая свеча интервала
 export interface MarketView {
     coinId: string;

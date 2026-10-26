@@ -87,6 +87,21 @@ export interface MarketSeries {
   series: SeriesPoint[]; // series[i].t === candles[i].t
 }
 
+// Свечей в куске истории. С WARMUP окно — 2000 = ровно 2 страницы Binance
+// по 1000 (weight 4), план TASK-0006
+export const HISTORY_CHUNK = 1500;
+
+// Кусок истории левее before — тем же расчётом рядов, что MarketSeries
+export interface HistoryChunk {
+  coinId: string;
+  market: string;
+  interval: Interval;
+  before: number; // openTime, исключительно: все свечи t < before
+  candles: Candle[]; // ≤ HISTORY_CHUNK, по возрастанию
+  series: SeriesPoint[]; // series[i].t === candles[i].t
+  complete: boolean; // true — левее свечей у Binance нет (листинг пары)
+}
+
 export interface MarketView {
   coinId: string;
   market: string;

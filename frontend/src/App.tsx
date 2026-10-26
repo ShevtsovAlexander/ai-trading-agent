@@ -1,18 +1,26 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import styled from "styled-components";
 import { isAxiosError } from "axios";
 import { getCandles, getView } from "./api/market";
 import { INTERVAL_MS, nearestAllowed } from "./types/market";
 import type { Interval, MarketSeries, MarketView, Range } from "./types/market";
-import { MarketStateCard } from "./components/MarketStateCard";
+import {
+  MarketStateCard,
+  MarketStateCardSkeleton,
+} from "./components/MarketStateCard";
 import { PriceChart } from "./components/PriceChart";
 import { IndicatorHistoryTable } from "./components/IndicatorHistoryTable";
 import { NewsPanel } from "./components/NewsPanel";
+import { useDelayedFlag } from "./hooks/useDelayedFlag";
+import { useChartHistory } from "./hooks/useChartHistory";
+import { mergeSeries } from "./components/chartData";
 
+// Монеты — монохром: цвет монеты был бы вторым брендовым цветом
+// (план TASK-0003, вопрос 2)
 const COINS = [
-  { id: "bitcoin", label: "BTC", market: "BTC/USDT", color: "#F7931A" },
-  { id: "ethereum", label: "ETH", market: "ETH/USDT", color: "#627EEA" },
-  { id: "solana", label: "SOL", market: "SOL/USDT", color: "#9945FF" },
+  { id: "bitcoin", label: "BTC", market: "BTC/USDT" },
+  { id: "ethereum", label: "ETH", market: "ETH/USDT" },
+  { id: "solana", label: "SOL", market: "SOL/USDT" },
 ];
 
 type Tab = "market" | "intel";
@@ -63,6 +71,10 @@ export default function App() {
   // ответ прошлой монеты закрашивает экран новой, а флаг ошибки рапортует
   // «всё в порядке» на данных не той монеты.
   const requestRef = useRef(0);
+  // Выбор, на который последний раз пришёл ответ (данные или ошибка).
+  // Загрузка — пока текущий выбор с ним не совпал: ошибка прошлой монеты
+  // не гасит скелетон новой (TASK-0005, критик)
+  const [settled, setSettled] = useState("");
 
   const load = useCallback(async () => {
     const token = ++requestRef.current;
@@ -71,6 +83,7 @@ export default function App() {
       getView(activeCoin.id, interval),
     ]);
     if (token !== requestRef.current) return; // приехало поздно
+    setSettled(`${activeCoin.id}|${interval}|${range}`);
 
     if (c.status === "fulfilled") {
       setChart(c.value);
@@ -119,44 +132,65 @@ export default function App() {
     chart.range === range
       ? chart
       : null;
+  // История левее основного окна; на графике — их объединение по t.
+  // Таблица остаётся на основном окне: ей нужны последние 50 точек
+  const history = useChartHistory(activeCoin.id, interval, range, chartShown);
+  const chartData = useMemo(
+    () => (chartShown ? mergeSeries(history.chunks, chartShown) : null),
+    [chartShown, history.chunks],
+  );
+
+  // Кусок левее самой ранней показанной свечи
+  const { loadMore } = history;
+  const needMore = useCallback(() => {
+    if (chartData?.candles.length) loadMore(chartData.candles[0].t);
+  }, [chartData, loadMore]);
+
   const viewShown =
     view && view.coinId === activeCoin.id && view.interval === interval
       ? view
       : null;
+  // Загрузка — данных про текущий выбор нет, и ответа на него ещё не было:
+  // первая загрузка и переключение. Опрос данные не прячет; ошибка текущего
+  // выбора — баннер или пометка, без скелетона. Баннер прошлого выбора
+  // висит до ответа, как в TASK-0004, — скелетон рядом с ним. Показ — через
+  // 300 мс, ответ из кэша не мигает (TASK-0005)
+  const pending = settled !== `${activeCoin.id}|${interval}|${range}`;
+  const chartLoading = useDelayedFlag(!chartShown && pending, 300);
+  const viewLoading = useDelayedFlag(!viewShown && pending, 300);
 
   return (
     <Wrapper>
       <Inner>
         <Header>
           <Title>
-            AI <Purple>Market</Purple> Dashboard
+            AI <Accent>Market</Accent> Dashboard
           </Title>
           <HeaderTabs>
             <CoinTabs>
               {COINS.map((coin) => (
-                <CoinBtn
+                <TabButton
                   key={coin.id}
-                  active={activeCoin.id === coin.id}
-                  color={coin.color}
+                  $active={activeCoin.id === coin.id}
                   onClick={() => setActiveCoin(coin)}
                 >
                   {coin.label}
-                </CoinBtn>
+                </TabButton>
               ))}
             </CoinTabs>
             <ViewTabs>
-              <ViewTab
+              <TabButton
                 $active={tab === "market"}
                 onClick={() => setTab("market")}
               >
                 Рынок
-              </ViewTab>
-              <ViewTab
+              </TabButton>
+              <TabButton
                 $active={tab === "intel"}
                 onClick={() => setTab("intel")}
               >
                 Инфополе
-              </ViewTab>
+              </TabButton>
             </ViewTabs>
           </HeaderTabs>
         </Header>
@@ -171,12 +205,18 @@ export default function App() {
 
           <TopRow>
             <PriceChart
-              data={chartShown}
+              data={chartData}
               coin={activeCoin}
               interval={interval}
               range={range}
               onRangeChange={setRange}
               onIntervalChange={changeInterval}
+              loading={chartLoading}
+              onNeedMore={needMore}
+              complete={history.complete}
+              historyLoading={history.loading}
+              historyError={history.error}
+              capped={history.capped}
             />
           </TopRow>
 
@@ -189,11 +229,13 @@ export default function App() {
                 </CardError>
               )}
               {viewShown && <MarketStateCard data={viewShown} />}
+              {viewLoading && <MarketStateCardSkeleton />}
             </Left>
             <IndicatorHistoryTable
               coinId={activeCoin.id}
               interval={interval}
               series={chartShown?.series ?? []}
+              loading={chartLoading}
             />
           </BottomRow>
         </TabPanel>
@@ -210,11 +252,13 @@ export default function App() {
 
 const Wrapper = styled.div`
   min-height: 100vh;
-  background: ${({ theme }) => theme.colors.bg};
+  background: ${({ theme }) => theme.colors.canvas};
   padding: 24px;
 `;
 
+// Ширина контента — как у системы (~1280px, DESIGN.md «Grid & Container»)
 const Inner = styled.div`
+  max-width: 1280px;
   margin: 0 auto;
 `;
 
@@ -225,14 +269,18 @@ const Header = styled.div`
   margin-bottom: 20px;
 `;
 
+// Inter 700 с отрицательным трекингом — без него жирный Inter «широкий»
+// (DESIGN.md «Typography → Principles»)
 const Title = styled.h1`
-  font-size: ${({ theme }) => theme.fontSize.lg};
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.text};
+  font-size: ${({ theme }) => theme.fontSize.xl};
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: ${({ theme }) => theme.colors.ink};
 `;
 
-const Purple = styled.span`
-  color: ${({ theme }) => theme.colors.purple};
+// Жёлтый — место «а» из плана (вопрос 4)
+const Accent = styled.span`
+  color: ${({ theme }) => theme.colors.primary};
 `;
 
 const HeaderTabs = styled.div`
@@ -251,51 +299,39 @@ const ViewTabs = styled.div`
   gap: 4px;
 `;
 
-const ViewTab = styled.button<{ $active: boolean }>`
-  padding: 6px 16px;
+// Вкладка — category-tab системы: неактивная прозрачная с приглушённым
+// текстом, активная — поверхность карточки и белый текст. Не жёлтая:
+// активных вкладок на экране несколько групп (план, вопрос 4)
+const TabButton = styled.button<{ $active: boolean }>`
+  padding: 8px 14px;
   border-radius: ${({ theme }) => theme.radius.md};
-  border: 1px solid
-    ${({ $active, theme }) =>
-      $active ? theme.colors.purple : theme.colors.border};
+  border: none;
   background: ${({ $active, theme }) =>
-    $active ? `${theme.colors.purple}22` : "transparent"};
+    $active ? theme.colors.surfaceCard : "transparent"};
   color: ${({ $active, theme }) =>
-    $active ? theme.colors.purple : theme.colors.textSecondary};
+    $active ? theme.colors.ink : theme.colors.muted};
   font-weight: 500;
-  font-size: ${({ theme }) => theme.fontSize.md};
+  font-size: ${({ theme }) => theme.fontSize.base};
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.15s, color 0.15s;
 `;
 
 const TabPanel = styled.div<{ $active: boolean }>`
   display: ${({ $active }) => ($active ? "block" : "none")};
 `;
 
-const CoinBtn = styled.button<{ active: boolean; color: string }>`
-  padding: 6px 16px;
-  border-radius: ${({ theme }) => theme.radius.md};
-  border: 1px solid ${({ active, color }) => (active ? color : "#333")};
-  background: ${({ active, color }) => (active ? `${color}22` : "transparent")};
-  color: ${({ active, color, theme }) =>
-    active ? color : theme.colors.textSecondary};
-  font-weight: 500;
-  font-size: ${({ theme }) => theme.fontSize.md};
-  cursor: pointer;
-  transition: all 0.15s;
-`;
-
 const ErrorBanner = styled.div`
   margin-bottom: 16px;
   padding: 12px 16px;
   border-radius: ${({ theme }) => theme.radius.md};
-  border: 1px solid ${({ theme }) => theme.colors.amber};
-  background: ${({ theme }) => `${theme.colors.amber}1a`};
-  color: ${({ theme }) => theme.colors.amber};
+  border: 1px solid ${({ theme }) => theme.colors.warning};
+  background: ${({ theme }) => `${theme.colors.warning}1a`};
+  color: ${({ theme }) => theme.colors.warning};
   font-size: ${({ theme }) => theme.fontSize.md};
 `;
 
 const CardError = styled.div`
-  color: ${({ theme }) => theme.colors.amber};
+  color: ${({ theme }) => theme.colors.warning};
   font-size: ${({ theme }) => theme.fontSize.md};
 `;
 
@@ -304,10 +340,13 @@ const TopRow = styled.div`
   margin-bottom: 16px;
 `;
 
+// min-height: высоту строки задаёт левая колонка (таблица справа —
+// абсолютным слоем), без карточки таблица схлопывалась до заголовка
 const BottomRow = styled.div`
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+  min-height: 360px;
 `;
 
 const Left = styled.div`

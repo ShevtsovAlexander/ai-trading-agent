@@ -1,22 +1,17 @@
-import styled from "styled-components";
-import {
-  ComposedChart,
-  Line,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
-import { INTERVAL_LABELS, INTERVAL_MS, RANGE_MS, isAllowed } from "../types/market";
+import { useState } from "react";
+import styled, { useTheme } from "styled-components";
+import { INTERVAL_LABELS, RANGE_MS, isAllowed } from "../types/market";
 import type { Interval, MarketSeries, Range } from "../types/market";
 import { formatCandleTime } from "../utils/candleTime";
+import { CandleChart } from "./CandleChart";
+import { Skeleton } from "./Skeleton";
+import { seriesKey } from "./chartData";
+import type { HoverPoint } from "./CandleChart";
 
 interface Coin {
   id: string;
   label: string;
   market: string;
-  color: string;
 }
 
 // data — свечи диапазона и ряды индикаторов от бэкенда; null — данных для
@@ -29,6 +24,12 @@ interface Props {
   range: Range;
   onRangeChange: (range: Range) => void;
   onIntervalChange: (interval: Interval) => void;
+  loading?: boolean; // данные в пути (TASK-0005) — плашки поверх пустого графика
+  onNeedMore: () => void; // подход к левому краю — кусок истории
+  complete: boolean; // начало истории у Binance
+  historyLoading: boolean; // кусок истории в пути
+  historyError: string | null; // кусок не загрузился (502/429/нет связи)
+  capped: boolean; // потолок баров — глубже не грузится
 }
 
 const INTERVALS: Interval[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
@@ -45,50 +46,84 @@ const RANGES: { label: string; value: Range }[] = [
 ];
 
 const Container = styled.div`
-  background: ${({ theme }) => theme.colors.surface};
-  border: 1px solid ${({ theme }) => theme.colors.border};
+  background: ${({ theme }) => theme.colors.surfaceCard};
+  border: 1px solid ${({ theme }) => theme.colors.hairline};
   border-radius: ${({ theme }) => theme.radius.lg};
   padding: 16px;
 `;
 
+// caption-uppercase системы (DESIGN.md «Typography»)
 const Title = styled.div`
-  font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  color: ${({ theme }) => theme.colors.muted};
   margin-bottom: 4px;
 `;
 
+// Заголовок и подпись видимого отрезка в одну строку
+const Heading = styled.div`
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+`;
+
+// «от – до» крайних видимых свечей (PRD крит. 10)
+const VisibleSpan = styled.span`
+  font-family: ${({ theme }) => theme.font.mono};
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  color: ${({ theme }) => theme.colors.muted};
+`;
+
+// Легенда — значения свечи под перекрестием (иначе последней), как строка
+// над графиком в TradingView. min-height — строка не прыгает без данных
 const Legend = styled.div`
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  min-height: 16px;
   margin-bottom: 12px;
+  font-family: ${({ theme }) => theme.font.mono};
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  color: ${({ theme }) => theme.colors.muted};
 `;
 
 const LegendItem = styled.div`
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  gap: 6px;
 `;
 
-const LegendDot = styled.span<{ color: string; dashed?: boolean }>`
+const Value = styled.span`
+  color: ${({ theme }) => theme.colors.body};
+`;
+
+const LegendDot = styled.span<{ $color: string; $dashed?: boolean }>`
   display: inline-block;
-  width: 16px;
-  height: 2px;
-  background: ${({ color }) => color};
-  opacity: ${({ dashed }) => (dashed ? 0.6 : 1)};
-  border-radius: 1px;
+  width: 14px;
+  border-top: 2px ${({ $dashed }) => ($dashed ? "dashed" : "solid")}
+    ${({ $color }) => $color};
 `;
 
-const TooltipContainer = styled.div`
-  background: #1f1f1f;
-  border: 1px solid #333;
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: 12px;
-  line-height: 1.6;
+// Два знака — та же точность, что у бэкенда и шкалы графика
+const fmt = (v: number | null) =>
+  v == null
+    ? "—"
+    : v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Плашка — поверх пустого графика, не вместо него: lightweight-charts
+// живёт в контейнере и не пересоздаётся при каждой загрузке
+const ChartArea = styled.div`
+  position: relative;
+`;
+
+// z-index — над слоями canvas графика, у них свой z-index
+const ChartSkeleton = styled.div`
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
 `;
 
 const Controls = styled.div`
@@ -113,28 +148,30 @@ const Selectors = styled.div`
 // Подписи рядов: «1ч» и «4ч» есть и среди свечей, и среди периодов
 const SelectorLabel = styled.span`
   font-size: ${({ theme }) => theme.fontSize.xs};
-  color: ${({ theme }) => theme.colors.textMuted};
+  color: ${({ theme }) => theme.colors.mutedSoft};
 `;
 
 const Separator = styled.span`
   width: 1px;
   height: 14px;
-  background: ${({ theme }) => theme.colors.border};
+  background: ${({ theme }) => theme.colors.hairline};
 `;
 
-const RangeBtn = styled.button<{ active: boolean }>`
-  padding: 2px 8px;
+// category-tab системы, mono. Активная — surfaceElevated, не surfaceCard
+// из DESIGN.md: кнопки лежат на карточке того же цвета и слились бы с ней
+// (решение человека, TASK-0003.7)
+const RangeBtn = styled.button<{ $active: boolean }>`
+  padding: 3px 8px;
   border-radius: ${({ theme }) => theme.radius.sm};
-  font-size: ${({ theme }) => theme.fontSize.xs};
-  border: 1px solid
-    ${({ active, theme }) =>
-      active ? theme.colors.purple : theme.colors.border};
-  background: ${({ active, theme }) =>
-    active ? `${theme.colors.purple}22` : "transparent"};
-  color: ${({ active, theme }) =>
-    active ? theme.colors.purple : theme.colors.textMuted};
+  border: none;
+  font-family: ${({ theme }) => theme.font.mono};
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  background: ${({ $active, theme }) =>
+    $active ? theme.colors.surfaceElevated : "transparent"};
+  color: ${({ $active, theme }) =>
+    $active ? theme.colors.ink : theme.colors.muted};
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.15s, color 0.15s;
 
   &:disabled {
     opacity: 0.35;
@@ -142,156 +179,91 @@ const RangeBtn = styled.button<{ active: boolean }>`
   }
 `;
 
-// --- tooltip ---
-
-// Точка графика: закрытая свеча (t — время открытия) плюс индикаторы на её
-// закрытии. Типизирована явно, чтобы тултип не ходил через any — recharts
-// отдаёт элемент данных в payload[n].payload как есть.
-// Пустая точка-разрыв (см. gapMs) — все поля, кроме t, null.
-interface ChartPoint {
-  t: number;
-  price: number | null;
-  ema9: number | null;
-  ema21: number | null;
-  bbUpper: number | null;
-  bbLower: number | null;
-  bbRange: [number, number] | null;
-}
-
-interface TooltipProps {
-  active?: boolean;
-  payload?: { payload: ChartPoint }[];
-}
-
-const CustomTooltip = ({
-  active,
-  payload,
-  withDate,
-  interval,
-}: TooltipProps & { withDate: boolean; interval: Interval }) => {
-  if (!active || !payload?.length) return null;
-  const d = payload[0].payload;
-  // На точке-разрыве показывать нечего
-  if (d.price == null) return null;
-
-  return (
-    <TooltipContainer>
-      <div style={{ color: "#888", marginBottom: 4 }}>
-        {formatCandleTime(d.t, interval, withDate)}
-      </div>
-      <div style={{ color: "#fff", fontWeight: 500 }}>
-        ${d.price.toLocaleString()}
-      </div>
-      {d.ema9 && (
-        <div style={{ color: "#a78bfa" }}>EMA9: ${d.ema9.toLocaleString()}</div>
-      )}
-      {d.ema21 && (
-        <div style={{ color: "#818cf8" }}>
-          EMA21: ${d.ema21.toLocaleString()}
-        </div>
-      )}
-      {d.bbUpper != null && d.bbLower != null && (
-        <div style={{ color: "#475569" }}>
-          BB: ${d.bbLower.toLocaleString()} – ${d.bbUpper.toLocaleString()}
-        </div>
-      )}
-    </TooltipContainer>
-  );
-};
-
-const getTickFormatter = (withDate: boolean) => (v: number) => {
-  const d = new Date(v);
-  if (withDate) {
-    return d.toLocaleDateString("ru-RU", { month: "short", day: "numeric" });
-  }
-  return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-};
-
-// Дыра между соседними свечами длиннее 3 интервалов — Binance не отдал
-// свечи (остановка биржи). Вставляем пустую точку, чтобы все серии рвались,
-// а не тянули прямую через пропуск.
-const GAP_INTERVALS = 3;
+// Метка у левого края графика: догрузка, её ошибка, начало истории,
+// потолок. z-index — над слоями canvas, как у скелетона
+const HistoryNote = styled.div`
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  padding: 3px 8px;
+  border-radius: ${({ theme }) => theme.radius.sm};
+  border: 1px solid ${({ theme }) => theme.colors.hairline};
+  background: ${({ theme }) => theme.colors.surfaceElevated};
+  font-family: ${({ theme }) => theme.font.mono};
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  color: ${({ theme }) => theme.colors.muted};
+  pointer-events: none;
+`;
 
 // --- component ---
 
 export const PriceChart = ({
-  data: series,
+  data,
   coin,
   interval,
   range,
   onRangeChange,
   onIntervalChange,
+  loading = false,
+  onNeedMore,
+  complete,
+  historyLoading,
+  historyError,
+  capped,
 }: Props) => {
-  // Бэкенд отдаёт ровно свечи диапазона, series[i].t === candles[i].t —
-  // окно и сопоставление по времени не нужны
-  const points: ChartPoint[] = (series?.candles ?? []).map((c, i) => {
-    const s = series!.series[i];
-    return {
-      t: c.t,
-      price: c.close,
-      ema9: s.ema9,
-      ema21: s.ema21,
-      bbUpper: s.bbUpper,
-      bbLower: s.bbLower,
-      // Полоса BB для Area: [низ, верх]. Без одной из границ — null, а не
-      // [null, null]: точка без BB полосы не рисует
-      bbRange:
-        s.bbLower != null && s.bbUpper != null ? [s.bbLower, s.bbUpper] : null,
-    };
-  });
-
-  const gapMs = GAP_INTERVALS * INTERVAL_MS[interval];
-  const data: ChartPoint[] = [];
-  for (const p of points) {
-    const prev = data[data.length - 1];
-    if (prev && p.t - prev.t > gapMs) {
-      data.push({
-        t: (prev.t + p.t) / 2,
-        price: null,
-        ema9: null,
-        ema21: null,
-        bbUpper: null,
-        bbLower: null,
-        bbRange: null,
-      });
-    }
-    data.push(p);
-  }
-
-  // Дата в подписях и тултипе — на окнах длиннее суток
-  const withDate = RANGE_MS[range] > RANGE_MS["24h"];
-  // Подписи оси — только на реальных точках: точка-разрыв посреди дыры
-  // подписала бы дату, в которую данных нет
-  const ticks = points.map((p) => p.t);
-
-  // Домен Y — по цене и границам BB с отступом 0.1%. Обрезать серии recharts
-  // и так не даст: при allowDataOverflow=false он расширяет заданный домен до
-  // данных. Здесь — отступ от краёв и пустая история без Infinity. Цикл, а не
-  // Math.min(...arr): до 5000 свечей × 3 значения — у лимита аргументов
-  // в Safari.
-  let min = Infinity;
-  let max = -Infinity;
-  for (const d of data) {
-    for (const v of [d.price, d.bbLower, d.bbUpper]) {
-      if (v == null) continue;
-      if (v < min) min = v;
-      if (v > max) max = v;
-    }
-  }
-  const domain: [number | string, number | string] =
-    min <= max ? [min * 0.999, max * 1.001] : ["auto", "auto"];
+  const theme = useTheme();
+  const [hover, setHover] = useState<HoverPoint | null>(null);
+  // Видимый отрезок графика (мс): после прокрутки и зума он, а не кнопка
+  // периода, решает, нужна ли дата в подписях
+  const [visible, setVisible] = useState<{ from: number; to: number } | null>(null);
+  // Дата в подписи перекрестия и легенды — если на экране больше суток.
+  // Пока отрезок неизвестен — по кнопке периода, как раньше
+  const span = visible ? visible.to - visible.from : RANGE_MS[range];
+  const withDate = span > RANGE_MS["24h"];
+  // Наведённая свеча ищется в текущих данных по ключу и времени: после смены
+  // монеты её нет — легенда показывает последнюю; после опроса — та же
+  // свеча из новых данных, перекрестие и числа не расходятся
+  const n = data?.candles.length ?? 0;
+  const hovered =
+    hover && data && hover.key === seriesKey(data)
+      ? data.candles.findIndex((c) => c.t === hover.t)
+      : -1;
+  const i = hovered >= 0 ? hovered : n - 1;
+  const shown = data && i >= 0 ? { candle: data.candles[i], point: data.series[i] } : null;
+  // Начало истории и потолок — только когда левый край данных на экране:
+  // иначе на 1д метка листинга висела бы над 2026 годом
+  const atStart = data != null && n > 0 && visible != null && visible.from <= data.candles[0].t;
+  const note = historyLoading
+    ? "загрузка истории…"
+    : historyError
+      ? `история не загрузилась: ${historyError}`
+      : atStart && complete
+        ? `начало истории ${coin.market} на Binance — ${formatCandleTime(data.candles[0].t, interval, true)}`
+        : atStart && capped
+          ? "глубже — переключись на свечу крупнее"
+          : null;
 
   return (
     <Container>
       <Controls>
-        <Title>{coin.market} — цена / EMA / BB</Title>
+        <Heading>
+          <Title>{coin.market} — цена / EMA / BB</Title>
+          {/* Дата — всегда: «09:00 – 21:00» в прошлом не говорит, какой день */}
+          {data && visible && (
+            <VisibleSpan>
+              {formatCandleTime(visible.from, interval, true)} –{" "}
+              {formatCandleTime(visible.to, interval, true)}
+            </VisibleSpan>
+          )}
+        </Heading>
         <Selectors>
           <SelectorLabel>свеча</SelectorLabel>
           <RangeTabs>
             {INTERVALS.map((iv) => (
               <RangeBtn
                 key={iv}
-                active={interval === iv}
+                $active={interval === iv}
                 onClick={() => onIntervalChange(iv)}
               >
                 {INTERVAL_LABELS[iv]}
@@ -304,7 +276,7 @@ export const PriceChart = ({
           {RANGES.map((r) => (
             <RangeBtn
               key={r.value}
-              active={range === r.value}
+              $active={range === r.value}
               // Больше MAX_CANDLES свечей на интервале — бэкенд ответит 400;
               // кнопка гаснет заранее (3мес на 5м — 25 920 свечей)
               disabled={!isAllowed(r.value, interval)}
@@ -323,94 +295,51 @@ export const PriceChart = ({
       </Controls>
 
       <Legend>
-        <LegendItem>
-          <LegendDot color={coin.color} />
-          Цена
-        </LegendItem>
-        <LegendItem>
-          <LegendDot color="#a78bfa" dashed />
-          EMA 9
-        </LegendItem>
-        <LegendItem>
-          <LegendDot color="#818cf8" dashed />
-          EMA 21
-        </LegendItem>
-        <LegendItem>
-          <LegendDot color="#334155" />
-          BB
-        </LegendItem>
+        {loading && <Skeleton $w="560px" $h="12px" />}
+        {shown && (
+          <>
+            <LegendItem>
+              <Value>{formatCandleTime(shown.candle.t, interval, withDate)}</Value>
+            </LegendItem>
+            <LegendItem>
+              O <Value>{fmt(shown.candle.open)}</Value>
+              H <Value>{fmt(shown.candle.high)}</Value>
+              L <Value>{fmt(shown.candle.low)}</Value>
+              C <Value>{fmt(shown.candle.close)}</Value>
+            </LegendItem>
+            <LegendItem>
+              <LegendDot $color={theme.chart.emaFast} />
+              EMA9 <Value>{fmt(shown.point.ema9)}</Value>
+            </LegendItem>
+            <LegendItem>
+              <LegendDot $color={theme.chart.emaSlow} />
+              EMA21 <Value>{fmt(shown.point.ema21)}</Value>
+            </LegendItem>
+            <LegendItem>
+              <LegendDot $color={theme.chart.bandLine} $dashed />
+              BB <Value>{fmt(shown.point.bbLower)} – {fmt(shown.point.bbUpper)}</Value>
+            </LegendItem>
+          </>
+        )}
       </Legend>
 
-      <ResponsiveContainer width="100%" height={200}>
-        <ComposedChart data={data}>
-          <XAxis
-            dataKey="t"
-            type="number"
-            scale="time"
-            domain={["dataMin", "dataMax"]}
-            ticks={ticks}
-            tickFormatter={getTickFormatter(withDate)}
-            tick={{ fill: "#555", fontSize: 10 }}
-            axisLine={false}
-            tickLine={false}
-            interval="preserveStartEnd"
-          />
-          <YAxis
-            domain={domain}
-            tick={{ fill: "#555", fontSize: 10 }}
-            axisLine={false}
-            tickLine={false}
-            tickFormatter={(v) => `$${v.toLocaleString()}`}
-            width={75}
-          />
-          <Tooltip
-            content={<CustomTooltip withDate={withDate} interval={interval} />}
-          />
-          {/* Полоса BB: Area по [bbLower, bbUpper] заливает между границами
-              и обводит обе (range area recharts) */}
-          <Area
-            type="monotone"
-            dataKey="bbRange"
-            stroke="#334155"
-            strokeWidth={1}
-            fill="#1e293b"
-            fillOpacity={0.3}
-            strokeDasharray="3 3"
-            dot={false}
-            activeDot={false}
-            isAnimationActive={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="ema9"
-            stroke="#a78bfa"
-            strokeWidth={1}
-            strokeDasharray="4 2"
-            dot={false}
-            activeDot={false}
-            isAnimationActive={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="ema21"
-            stroke="#818cf8"
-            strokeWidth={1}
-            strokeDasharray="4 2"
-            dot={false}
-            activeDot={false}
-            isAnimationActive={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="price"
-            stroke={coin.color}
-            strokeWidth={2}
-            dot={false}
-            activeDot={{ r: 4, fill: coin.color }}
-            isAnimationActive={false}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
+      <ChartArea aria-busy={loading}>
+        <CandleChart
+          data={data}
+          interval={interval}
+          withDate={withDate}
+          onHover={setHover}
+          onNeedMore={onNeedMore}
+          complete={complete}
+          onVisibleRange={setVisible}
+        />
+        {data && note && <HistoryNote>{note}</HistoryNote>}
+        {loading && (
+          <ChartSkeleton>
+            <Skeleton $h="100%" />
+          </ChartSkeleton>
+        )}
+      </ChartArea>
     </Container>
   );
 };
