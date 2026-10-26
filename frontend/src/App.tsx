@@ -214,6 +214,9 @@ export default function App() {
               loading={chartLoading}
               onNeedMore={needMore}
               complete={history.complete}
+              historyLoading={history.loading}
+              historyError={history.error}
+              capped={history.capped}
             />
           </TopRow>
 

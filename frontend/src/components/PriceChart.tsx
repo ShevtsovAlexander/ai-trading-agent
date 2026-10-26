@@ -27,6 +27,9 @@ interface Props {
   loading?: boolean; // данные в пути (TASK-0005) — плашки поверх пустого графика
   onNeedMore: () => void; // подход к левому краю — кусок истории
   complete: boolean; // начало истории у Binance
+  historyLoading: boolean; // кусок истории в пути
+  historyError: string | null; // кусок не загрузился (502/429/нет связи)
+  capped: boolean; // потолок баров — глубже не грузится
 }
 
 const INTERVALS: Interval[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
@@ -176,6 +179,23 @@ const RangeBtn = styled.button<{ $active: boolean }>`
   }
 `;
 
+// Метка у левого края графика: догрузка, её ошибка, начало истории,
+// потолок. z-index — над слоями canvas, как у скелетона
+const HistoryNote = styled.div`
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  padding: 3px 8px;
+  border-radius: ${({ theme }) => theme.radius.sm};
+  border: 1px solid ${({ theme }) => theme.colors.hairline};
+  background: ${({ theme }) => theme.colors.surfaceElevated};
+  font-family: ${({ theme }) => theme.font.mono};
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  color: ${({ theme }) => theme.colors.muted};
+  pointer-events: none;
+`;
+
 // --- component ---
 
 export const PriceChart = ({
@@ -188,6 +208,9 @@ export const PriceChart = ({
   loading = false,
   onNeedMore,
   complete,
+  historyLoading,
+  historyError,
+  capped,
 }: Props) => {
   const theme = useTheme();
   const [hover, setHover] = useState<HoverPoint | null>(null);
@@ -208,6 +231,18 @@ export const PriceChart = ({
       : -1;
   const i = hovered >= 0 ? hovered : n - 1;
   const shown = data && i >= 0 ? { candle: data.candles[i], point: data.series[i] } : null;
+  // Начало истории и потолок — только когда левый край данных на экране:
+  // иначе на 1д метка листинга висела бы над 2026 годом
+  const atStart = data != null && n > 0 && visible != null && visible.from <= data.candles[0].t;
+  const note = historyLoading
+    ? "загрузка истории…"
+    : historyError
+      ? `история не загрузилась: ${historyError}`
+      : atStart && complete
+        ? `начало истории ${coin.market} на Binance — ${formatCandleTime(data.candles[0].t, interval, true)}`
+        : atStart && capped
+          ? "глубже — переключись на свечу крупнее"
+          : null;
 
   return (
     <Container>
@@ -298,6 +333,7 @@ export const PriceChart = ({
           complete={complete}
           onVisibleRange={setVisible}
         />
+        {data && note && <HistoryNote>{note}</HistoryNote>}
         {loading && (
           <ChartSkeleton>
             <Skeleton $h="100%" />

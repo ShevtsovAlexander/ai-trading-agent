@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isAxiosError } from "axios";
 import { getHistory } from "../api/market";
 import { adjoins, evicted } from "../components/chartData";
@@ -7,6 +7,10 @@ import type { HistoryChunk, Interval, MarketSeries, Range } from "../types/marke
 // Потолок баров в браузере (замер T1, решение человека 2026-10-22): 100 тыс.
 // — setData ≈ 0,2 с, куча ≈ 180 МБ; 1 млн — секунды и ≈ 1,8 ГБ
 export const MAX_BARS = 100_000;
+// Пауза перед повтором куска: 429 — страж веса держится до конца минуты;
+// 502 и нет связи — короткая, чтобы у края не слать запрос за запросом
+const LIMIT_PAUSE_MS = 60_000;
+const ERROR_PAUSE_MS = 5_000;
 
 interface State {
   key: string; // монета|интервал|диапазон
@@ -18,6 +22,7 @@ interface State {
   loading: boolean;
   error: string | null;
   complete: boolean;
+  retryAt: number; // мс; раньше — loadMore не шлёт запрос (после ошибки)
 }
 
 const fresh = (key: string, epoch: number, seen: MarketSeries | null): State => ({
@@ -28,6 +33,7 @@ const fresh = (key: string, epoch: number, seen: MarketSeries | null): State => 
   loading: false,
   error: null,
   complete: false,
+  retryAt: 0,
 });
 
 // 429/502 — текст бэкенда («Лимит Binance…», «Binance недоступен»)
@@ -76,13 +82,13 @@ export const useChartHistory = (
   const bars =
     s.chunks.reduce((n, c) => n + c.candles.length, 0) + (main?.candles.length ?? 0);
   const capped = bars >= MAX_BARS;
-  const { epoch, loading, complete } = s;
+  const { epoch, loading, complete, retryAt } = s;
 
   // before — t самой ранней показанной свечи
   const loadMore = useCallback(
     (before: number) => {
       const last = lastRef.current;
-      if (loading || complete || capped) return;
+      if (loading || complete || capped || Date.now() < retryAt) return;
       if (last && last.epoch === epoch && before >= last.before) return;
       lastRef.current = { epoch, before };
       setState((st) => (st.epoch === epoch ? { ...st, loading: true, error: null } : st));
@@ -103,14 +109,36 @@ export const useChartHistory = (
           const cur = lastRef.current;
           if (cur && cur.epoch === epoch && cur.before === before) lastRef.current = null;
           console.warn("[dashboard] история не загрузилась:", e);
+          const limited = isAxiosError(e) && e.response?.status === 429;
           setState((st) =>
-            st.epoch === epoch ? { ...st, loading: false, error: errorText(e) } : st,
+            st.epoch === epoch
+              ? {
+                  ...st,
+                  loading: false,
+                  error: errorText(e),
+                  retryAt: Date.now() + (limited ? LIMIT_PAUSE_MS : ERROR_PAUSE_MS),
+                }
+              : st,
           );
         },
       );
     },
-    [coinId, interval, epoch, loading, complete, capped],
+    [coinId, interval, epoch, loading, complete, capped, retryAt],
   );
+
+  // Конец паузы — новый loadMore: график перепроверит край и повторит сам,
+  // если вид всё ещё у края (у предела прокрутки событий диапазона нет).
+  // Ошибка снимается вместе с паузой: ушли от края — повтора нет, и метка
+  // не висит над свежими свечами (критик T8)
+  useEffect(() => {
+    const wait = retryAt - Date.now();
+    if (wait <= 0) return;
+    const timer = setTimeout(
+      () => setState((st) => (st.epoch === epoch && st.retryAt === retryAt ? { ...st, retryAt: 0, error: null } : st)),
+      wait,
+    );
+    return () => clearTimeout(timer);
+  }, [epoch, retryAt]);
 
   return { chunks: s.chunks, loading, error: s.error, complete, capped, loadMore };
 };

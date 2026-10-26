@@ -6,6 +6,7 @@ import {
   CrosshairMode,
   LineSeries,
   LineStyle,
+  MismatchDirection,
   TickMarkType,
   createChart,
 } from "lightweight-charts";
@@ -305,17 +306,39 @@ export const CandleChart = ({
     return () => ts.unsubscribeVisibleLogicalRangeChange(handler);
   }, [theme]);
 
-  // Видимый отрезок → подпись «от – до» над графиком и дата в подписях
+  // Новый onNeedMore (данные, конец паузы после ошибки куска) — край
+  // перепроверяется без события диапазона: у предела прокрутки вид не
+  // двигается, и повтор иначе ждал бы, пока пользователь отъедет и вернётся.
+  // После эффекта данных — по уже нарисованному ряду
+  useEffect(() => {
+    const range = chartRef.current?.timeScale().getVisibleLogicalRange();
+    const bars = range && seriesRef.current?.candles.barsInLogicalRange(range);
+    if (bars && bars.barsBefore < EDGE_BARS) onNeedMore();
+  }, [onNeedMore]);
+
+  // Видимый отрезок → подпись «от – до» над графиком и дата в подписях.
+  // Крайние — свечи под крайними пикселями, как у перекрестия
+  // (coordinateToLogical). Края логического диапазона сдвинуты от пикселей
+  // примерно на полсвечи: и getVisibleRange, и округление from/to
+  // расходились с перекрестием у края на свечу (приёмка T9)
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
     const ts = chart.timeScale();
-    const handler = (r: { from: Time; to: Time } | null) =>
+    const handler = (r: LogicalRange | null) => {
+      const s = seriesRef.current?.candles;
+      const left = ts.coordinateToLogical(0);
+      const right = ts.coordinateToLogical(ts.width() - 1);
+      const a = r && left != null && s?.dataByIndex(left, MismatchDirection.NearestRight);
+      const b = r && right != null && s?.dataByIndex(right, MismatchDirection.NearestLeft);
       visibleRef.current(
-        r ? { from: (r.from as UTCTimestamp) * 1000, to: (r.to as UTCTimestamp) * 1000 } : null,
+        a && b
+          ? { from: (a.time as UTCTimestamp) * 1000, to: (b.time as UTCTimestamp) * 1000 }
+          : null,
       );
-    ts.subscribeVisibleTimeRangeChange(handler);
-    return () => ts.unsubscribeVisibleTimeRangeChange(handler);
+    };
+    ts.subscribeVisibleLogicalRangeChange(handler);
+    return () => ts.unsubscribeVisibleLogicalRangeChange(handler);
   }, [theme]);
 
   // Перекрестие → свеча по времени открытия. На разрыве (пустая точка) и вне
