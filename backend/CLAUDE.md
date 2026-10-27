@@ -22,6 +22,8 @@ AI-дайджест ленты. Своей истории цен не копит
 - Prisma 7 + @prisma/adapter-pg — ORM для PostgreSQL
 - Binance API — закрытые свечи (`klines`) для дашборда и бэктеста; монеты —
   только пары Binance (BTC/ETH/SOL), CoinGecko-fallback снят в TASK-0004
+- Деривативы (TASK-0007) — Binance USDⓈ-M (`fapi.binance.com`: ставка,
+  история ставок, OI), OKX и Bybit (OI); все без ключа
 - technicalindicators — только в тестах, эталон формул индикаторов
 
 ## Структура проекта
@@ -38,6 +40,15 @@ src/
 ├── binance/
 │   ├── klines.ts                 — fetchClosedCandles: закрытые свечи постранично по 1000, незакрытая отброшена; вес из заголовка x-mbx-used-weight-1m
 │   └── klines.spec.ts            — 5 тестов на честном фейке HTTP
+├── derivatives/                  — TASK-0007
+│   ├── sources.ts                — запросы к fapi/OKX/Bybit: ставка+markPrice, история ставок постранично, OI трёх бирж в USD; строгий разбор
+│   ├── stress.ts                 — fundingStress: мера «от нейтральной» 0,01 % за 365 дней
+│   ├── derivatives.service.ts    — сборка ответа, allSettled, кэш снимка 30 с, кэш истории до выплаты
+│   ├── derivatives.controller.ts — GET /derivatives/:coinId
+│   ├── derivatives.module.ts
+│   ├── derivatives.types.ts      — символы бирж по coinId, Stress, Derivatives (зеркало — frontend/src/types/derivatives.ts)
+│   ├── fixtures/                 — live-2026-10-27.json (ответы бирж, оракул разбора), stress-oracle.json (история + эталон Python)
+│   └── *.spec.ts                 — sources 32, stress 19, service 15
 ├── digest/
 │   ├── digest.module.ts
 │   ├── digest.service.ts         — AI-дайджест ленты, кэш по хешу набора id
@@ -72,6 +83,7 @@ src/
 - GET  /market/candles/:coinId?interval=5m&range=24h — свечи диапазона + ряды индикаторов
 - GET  /market/candles/:coinId/history?interval=5m&before=<мс> — кусок истории левее before (TASK-0006)
 - GET  /market/view/:coinId?interval=5m              — последняя закрытая свеча интервала + aiComment
+- GET  /derivatives/:coinId               — ставка Binance + мера, OI Binance/OKX/Bybit (TASK-0007)
 - GET  /news                              — крипто-новости из RSS (Cointelegraph, Coindesk, Decrypt)
 - GET  /news/digest                       — AI-дайджест ленты (кэш по хешу id, генерится при обновлении ленты)
 - POST /backtest/run                      — прогон стратегии на исторических свечах
@@ -153,6 +165,40 @@ closeTime последней закрытой свечи; `latest` — её `Ser
   режет (на отказ Binance — 502, как раньше). Нет заголовка — ограничитель
   выключен, `logger.warn` один раз.
 
+## Деривативы (TASK-0007)
+`GET /derivatives/:coinId` → `Derivatives { coinId, market, funding,
+openInterest }`. Отказ источника — текстом в его поле (`{ error }`), не 502:
+источники независимы (`Promise.allSettled`). `400` — неизвестная монета
+(проверка по `DERIVATIVE_SYMBOLS` и `COINS`).
+- `funding: FundingView | { error }` — `rate` (доля: 0.0001 = 0,01 %,
+  `lastFundingRate` — расчётная на ближайшую выплату), `nextFundingTime`,
+  `at`, `stress: Stress | null` (null — история не загрузилась).
+- `openInterest: { totalUsd, exchanges }` — всегда binance, okx, bybit;
+  `{ exchange, usd, at }` или `{ exchange, error }`; `totalUsd` — сумма
+  доступных, `null` — ни одной. Binance — `openInterest` (монеты) ×
+  `markPrice` из того же `premiumIndex`: упал он — нет ни ставки, ни OI
+  Binance. OKX — `oiUsd`, Bybit — `openInterestValue` из `tickers`.
+- **Мера «от нейтральной»** (`stress.ts`, замер — `../docs/RESEARCH.md`
+  «Funding Binance»): нейтраль 0,01 % за 8 ч. Интервал — от последней
+  выплаты до `nextFundingTime`, округлён до часа (`fundingTime` дрожит на
+  мс); не 8 ч → `unknown`. Окно — выплаты `(now − 365 дн, now]` с шагом 8 ч
+  от предыдущей (2–4-часовые не сравниваются). `|ставка − 0,0001| < 1e-9` →
+  `neutral`; выше → `above`, `tailPct` — доля окна ≥ ставки; `0 ≤ ставка <`
+  → `below`, `< 0` → `negative`, `tailPct` — доля ≤ ставки. Бэкенд не
+  округляет.
+- **Кэш:** снимок 30 с по монете — и с ошибками бирж (повтор к упавшей —
+  через 30 с); два одновременных запроса одной монеты оба идут к биржам —
+  принято. История — с `now − 366 дн` (у первой выплаты окна нужна
+  предыдущая), держится до `nextFundingTime`, только если полна: шаг
+  «последняя → следующая» = шагу двух последних выплат.
+- **Разбор строгий** (`sources.ts`): нет поля, пустая или пробельная
+  строка, не число, отрицательный OI, цена ≤ 0 → ошибка источника, а не
+  NaN или 0 на экране. OKX и Bybit сообщают об ошибке **в теле при HTTP 200**
+  (`code`, `retCode`) — проверяется. `fundingRate` всегда со `startTime > 0`:
+  без него (и при 0) Binance отдаёт только 500 последних.
+- Ограничителя запросов нет: у fapi нет заголовка веса; с кэшем — до ≈ 24 запросов
+  в минуту (три монеты сразу; одна вкладка — ≈ 8) при лимитах бирж в тысячи.
+
 ## AI-комментарий (market.comment.ts)
 - `describeView(view)` описывает обстановку на последней закрытой свече
   интервала. Промпт запрещает рекомендации и действия («купить», «продать»,
@@ -185,6 +231,19 @@ closeTime последней закрытой свечи; `latest` — её `Ser
   MACD-гистограммы назван «усилением нисходящего давления». Оракула у
   текста нет — проверка живой сверкой.
 - `backtest.service.ts` держит свой `fetchCandles` — дубль `binance/klines.ts`.
+- **Нейтраль ставки 0,01 % — константа** (`stress.ts`): если Binance сменит
+  базовую ставку, мера будет мерить от старой; `interestRate` в ответе есть,
+  но история окна посчитана при прежней. Историю `interestRate` не
+  выгружали; косвенно — выплаты ровно 0,01 % есть в каждом году 2019–2026
+  (`../docs/RESEARCH.md`). Принято (TASK-0007).
+- **axios и `HTTPS_PROXY`:** при переменной прокси в окружении axios получает
+  400 на все хосты (спот, fapi, OKX, Bybit), `fetch` Node — 200 (замечено в
+  терминале агента, TASK-0007.2). У бэкенда, запущенного человеком, прокси
+  нет; поведение за прокси не проверено.
+- OKX отвечает 403 на User-Agent `Python-urllib` (axios, curl — 200) — для
+  скриптов сверки.
+- «Через N мин» до выплаты фронт считает от `at` снимка — отставание до
+  ~90 с (кэш 30 с + опрос 60 с).
 - Простой Binance длиннее окна куска с разогревом (2000 свечей: ≈ 7 дней
   на 5м, ≈ 21 день на 15м) даст `complete: true` и метку «начало истории»
   с датой после простоя. У BTC/ETH/SOL таких простоев не замечено, по
@@ -211,7 +270,7 @@ npm run start:dev
 
 ## Тесты
 npm run test
-46 тестов, только с внешним оракулом:
+112 тестов, только с внешним оракулом:
 - `indicators/indicators.spec.ts` — 11: EMA(9/21/26), RSI(14) на ряде и трёх
   краевых, MACD, BB(20), ширина BB, SMA(5) против technicalindicators.
 - `binance/klines.spec.ts` — 5: пагинация 2300 свечей за 3 запроса,
@@ -229,8 +288,20 @@ npm run test
   точные строки промпта (изменения — арифметика), разные интервалы — разные
   записи кэша.
 
+- `derivatives/sources.spec.ts` — 32: разбор на реальных ответах трёх бирж
+  (фикстура curl 2026-10-27), OI Binance = монеты × `markPrice` (и в
+  границах 7,8–7,9 млрд), ошибки в теле при HTTP 200, пустые/пробельные/
+  отрицательные значения; история — 2300 выплат за 3 страницы на честном
+  фейке, `startTime 0` — ошибка без запроса, «страница не сдвинулась».
+- `derivatives/stress.spec.ts` — 19: мера против независимого расчёта на
+  Python (`fixtures/stress-oracle.json`: история BTC 2023–2026, SOL
+  2021–2022 с переходом 8 → 4 → 2 → 8 ч), края окна, дрожание мс.
+- `derivatives/derivatives.service.spec.ts` — 15: фейк по URL на реальных
+  ответах, частичные отказы, сумма OI (и в границах 15,5–15,7 млрд), кэш
+  снимка и истории (счётчик запросов), интервал 4 ч с пропуском, 400.
+
 Каждый новый тест прогнан против мутанта кода (красный) — итоги в
-`../docs/aidd/tasklist/TASK-0004.md`.
+`../docs/aidd/tasklist/TASK-0004.md` и `TASK-0007.md`.
 
 `npm run test:e2e` сломан до миграции (ждёт `GET /` → «Hello World!»).
 

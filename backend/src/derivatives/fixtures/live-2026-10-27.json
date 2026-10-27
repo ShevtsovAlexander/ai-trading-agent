@@ -1,0 +1,248 @@
+{
+ "capturedAt": "2026-10-27",
+ "binancePremiumIndex": {
+  "BTCUSDT": {
+   "symbol": "BTCUSDT",
+   "markPrice": "79893.71833333",
+   "indexPrice": "79926.34673913",
+   "estimatedSettlePrice": "79914.41936361",
+   "lastFundingRate": "0.00008241",
+   "interestRate": "0.00010000",
+   "nextFundingTime": 1793116800000,
+   "time": 1793102309001
+  },
+  "ETHUSDT": {
+   "symbol": "ETHUSDT",
+   "markPrice": "2315.94431034",
+   "indexPrice": "2316.73465116",
+   "estimatedSettlePrice": "2315.82572094",
+   "lastFundingRate": "0.00005221",
+   "interestRate": "0.00010000",
+   "nextFundingTime": 1793116800000,
+   "time": 1793102313004
+  },
+  "SOLUSDT": {
+   "symbol": "SOLUSDT",
+   "markPrice": "100.16000000",
+   "indexPrice": "100.20130746",
+   "estimatedSettlePrice": "100.18160805",
+   "lastFundingRate": "0.00008443",
+   "interestRate": "0.00010000",
+   "nextFundingTime": 1793116800000,
+   "time": 1793102316000
+  }
+ },
+ "binanceOpenInterest": {
+  "BTCUSDT": {
+   "symbol": "BTCUSDT",
+   "openInterest": "98147.175",
+   "time": 1793102305554
+  },
+  "ETHUSDT": {
+   "symbol": "ETHUSDT",
+   "openInterest": "2369157.217",
+   "time": 1793102311606
+  },
+  "SOLUSDT": {
+   "symbol": "SOLUSDT",
+   "openInterest": "9007330.31",
+   "time": 1793102312264
+  }
+ },
+ "okxOpenInterest": {
+  "BTC-USDT-SWAP": {
+   "code": "0",
+   "data": [
+    {
+     "instId": "BTC-USDT-SWAP",
+     "instType": "SWAP",
+     "oi": "3274860.39000001308",
+     "oiCcy": "32748.6039000001308",
+     "oiUsd": "2616613451.61001045092",
+     "ts": "1793102311382"
+    }
+   ],
+   "msg": ""
+  },
+  "ETH-USDT-SWAP": {
+   "code": "0",
+   "data": [
+    {
+     "instId": "ETH-USDT-SWAP",
+     "instType": "SWAP",
+     "oi": "6535014.4700000176",
+     "oiCcy": "653501.44700000176",
+     "oiUsd": "1513424396.0638940759312",
+     "ts": "1793102315023"
+    }
+   ],
+   "msg": ""
+  },
+  "SOL-USDT-SWAP": {
+   "code": "0",
+   "data": [
+    {
+     "instId": "SOL-USDT-SWAP",
+     "instType": "SWAP",
+     "oi": "3268810.5600000007",
+     "oiCcy": "3268810.5600000007",
+     "oiUsd": "327371377.584000070105",
+     "ts": "1793102318693"
+    }
+   ],
+   "msg": ""
+  }
+ },
+ "bybitTickers": {
+  "BTCUSDT": {
+   "retCode": 0,
+   "retMsg": "OK",
+   "result": {
+    "category": "linear",
+    "list": [
+     {
+      "symbol": "BTCUSDT",
+      "lastPrice": "79891.80",
+      "indexPrice": "79925.74",
+      "markPrice": "79895.47",
+      "prevPrice24h": "80403.60",
+      "price24hPcnt": "-0.006365",
+      "highPrice24h": "80824.50",
+      "lowPrice24h": "79416.00",
+      "prevPrice1h": "79956.00",
+      "openInterest": "64673.556",
+      "openInterestValue": "5167124153.19",
+      "singleOpenInterest": "32336.778",
+      "singleOpenInterestValue": "2583562076.60",
+      "turnover24h": "3939582070.6986",
+      "volume24h": "49267.9210",
+      "fundingRate": "0.0001",
+      "nextFundingTime": "1793116800000",
+      "predictedDeliveryPrice": "",
+      "basisRate": "",
+      "deliveryFeeRate": "",
+      "deliveryTime": "0",
+      "ask1Size": "1.512",
+      "bid1Price": "79891.80",
+      "ask1Price": "79891.90",
+      "bid1Size": "6.068",
+      "basis": "",
+      "preOpenPrice": "",
+      "preQty": "",
+      "curPreListingPhase": "",
+      "fundingIntervalHour": "8",
+      "basisRateYear": "",
+      "fundingCap": "0.00333"
+     }
+    ]
+   },
+   "retExtInfo": {},
+   "time": 1793102312385
+  },
+  "ETHUSDT": {
+   "retCode": 0,
+   "retMsg": "OK",
+   "result": {
+    "category": "linear",
+    "list": [
+     {
+      "symbol": "ETHUSDT",
+      "lastPrice": "2315.68",
+      "indexPrice": "2316.85",
+      "markPrice": "2315.71",
+      "prevPrice24h": "2335.03",
+      "price24hPcnt": "-0.008286",
+      "highPrice24h": "2343.86",
+      "lowPrice24h": "2294.25",
+      "prevPrice1h": "2315.35",
+      "openInterest": "797437.03",
+      "openInterestValue": "1846632904.74",
+      "singleOpenInterest": "398718.52",
+      "singleOpenInterestValue": "923316463.95",
+      "turnover24h": "1866420488.7777",
+      "volume24h": "805667.0000",
+      "fundingRate": "0.00004077",
+      "nextFundingTime": "1793116800000",
+      "predictedDeliveryPrice": "",
+      "basisRate": "",
+      "deliveryFeeRate": "",
+      "deliveryTime": "0",
+      "ask1Size": "26.50",
+      "bid1Price": "2315.67",
+      "ask1Price": "2315.68",
+      "bid1Size": "98.65",
+      "basis": "",
+      "preOpenPrice": "",
+      "preQty": "",
+      "curPreListingPhase": "",
+      "fundingIntervalHour": "8",
+      "basisRateYear": "",
+      "fundingCap": "0.00333"
+     }
+    ]
+   },
+   "retExtInfo": {},
+   "time": 1793102315987
+  },
+  "SOLUSDT": {
+   "retCode": 0,
+   "retMsg": "OK",
+   "result": {
+    "category": "linear",
+    "list": [
+     {
+      "symbol": "SOLUSDT",
+      "lastPrice": "100.150",
+      "indexPrice": "100.205",
+      "markPrice": "100.154",
+      "prevPrice24h": "101.790",
+      "price24hPcnt": "-0.016111",
+      "highPrice24h": "102.730",
+      "lowPrice24h": "99.080",
+      "prevPrice1h": "100.140",
+      "openInterest": "6031771.3",
+      "openInterestValue": "604106022.78",
+      "singleOpenInterest": "3015885.7",
+      "singleOpenInterestValue": "302053016.40",
+      "turnover24h": "415718394.0340",
+      "volume24h": "4129391.0000",
+      "fundingRate": "0",
+      "nextFundingTime": "1793116800000",
+      "predictedDeliveryPrice": "",
+      "basisRate": "",
+      "deliveryFeeRate": "",
+      "deliveryTime": "0",
+      "ask1Size": "1682.3",
+      "bid1Price": "100.150",
+      "ask1Price": "100.160",
+      "bid1Size": "420.7",
+      "basis": "",
+      "preOpenPrice": "",
+      "preQty": "",
+      "curPreListingPhase": "",
+      "fundingIntervalHour": "8",
+      "basisRateYear": "",
+      "fundingCap": "0.005"
+     }
+    ]
+   },
+   "retExtInfo": {},
+   "time": 1793102319481
+  }
+ },
+ "errors": {
+  "_note": "\u043e\u0442\u0432\u0435\u0442\u044b \u043d\u0430 \u043d\u0435\u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044e\u0449\u0438\u0439 \u0441\u0438\u043c\u0432\u043e\u043b, curl 2026-10-27; OKX \u0438 Bybit \u2014 HTTP 200 \u0441 \u043a\u043e\u0434\u043e\u043c \u043e\u0448\u0438\u0431\u043a\u0438 \u0432 \u0442\u0435\u043b\u0435, Binance \u2014 HTTP 400",
+  "okx": {
+   "code": "51001",
+   "data": [],
+   "msg": "Instrument ID, Instrument ID code, or Spread ID doesn't exist."
+  },
+  "bybit": {
+   "retCode": 10001,
+   "retMsg": "params error: symbol invalid",
+   "result": {},
+   "retExtInfo": {},
+   "time": 1793102327462
+  }
+ }
+}

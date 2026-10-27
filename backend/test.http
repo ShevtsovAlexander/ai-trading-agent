@@ -14,3 +14,13 @@ GET http://localhost:3000/market/candles/bitcoin?interval=5m&range=3m
 
 # Последняя закрытая свеча интервала для карточки
 GET http://localhost:3000/market/view/bitcoin?interval=5m
+
+###
+
+# Деривативы: ставка Binance + мера необычности, OI Binance/OKX/Bybit (TASK-0007)
+GET http://localhost:3000/derivatives/bitcoin
+
+###
+
+# Неизвестная монета — 400
+GET http://localhost:3000/derivatives/dogecoin
