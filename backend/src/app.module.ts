@@ -7,6 +7,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BacktestModule } from './backtest/backtest.module';
 import { NewsModule } from './news/news.module';
+import { DerivativesModule } from './derivatives/derivatives.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { NewsModule } from './news/news.module';
     MarketModule,
     BacktestModule,
     NewsModule,
+    DerivativesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

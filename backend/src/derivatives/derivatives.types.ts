@@ -36,3 +36,34 @@ export interface Stress {
   samples: number; // выплат в окне
   intervalHours: number; // шаг двух последних выплат, округлён до часа
 }
+
+// Ответ GET /derivatives/:coinId (зеркало — frontend/src/types/derivatives.ts).
+// Отказ источника — текстом в его поле, не 502 на весь ответ: источники
+// независимы (план TASK-0007, «Контракты»).
+export interface SourceError {
+  error: string;
+}
+
+export interface FundingView {
+  exchange: 'binance';
+  rate: number; // доля: 0.0000809 = 0,00809 %; lastFundingRate
+  nextFundingTime: number; // мс, из ответа Binance
+  at: number; // мс, время premiumIndex
+  stress: Stress | null; // null — история не загрузилась или пуста
+}
+
+export type ExchangeOpenInterest =
+  | { exchange: Exchange; usd: number; at: number }
+  | { exchange: Exchange; error: string };
+
+export interface OpenInterestView {
+  totalUsd: number | null; // сумма доступных бирж; null — ни одной
+  exchanges: ExchangeOpenInterest[]; // всегда binance, okx, bybit
+}
+
+export interface Derivatives {
+  coinId: string;
+  market: string;
+  funding: FundingView | SourceError;
+  openInterest: OpenInterestView;
+}
