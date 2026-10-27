@@ -17,3 +17,22 @@ export interface FundingPayment {
   t: number;
   rate: number;
 }
+
+// Мера «от нейтральной» (решение человека по TASK-0007.1, docs/RESEARCH.md
+// «Funding Binance: к чему мерить «необычность»»)
+export type FundingState =
+  | 'above' // > нейтральной: лонги переплачивают
+  | 'neutral' // ровно нейтральная 0,01 %
+  | 'below' // 0 ≤ ставка < нейтральной
+  | 'negative' // < 0: шорты платят лонгам
+  | 'unknown'; // интервал выплат не 8 ч — нейтраль не установлена
+
+export interface Stress {
+  state: FundingState;
+  // Доля выплат окна «так же далеко или дальше», 0–100: above — со ставкой
+  // ≥ текущей; below/negative — ≤ текущей. null при neutral/unknown.
+  tailPct: number | null;
+  periodDays: number;
+  samples: number; // выплат в окне
+  intervalHours: number; // шаг двух последних выплат, округлён до часа
+}
