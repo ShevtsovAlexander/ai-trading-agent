@@ -12,6 +12,11 @@ import {
 import { PriceChart } from "./components/PriceChart";
 import { IndicatorHistoryTable } from "./components/IndicatorHistoryTable";
 import { NewsPanel } from "./components/NewsPanel";
+import {
+  DerivativesPanel,
+  DerivativesPanelSkeleton,
+} from "./components/DerivativesPanel";
+import { useDerivatives } from "./hooks/useDerivatives";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
 import { useChartHistory } from "./hooks/useChartHistory";
 import { mergeSeries } from "./components/chartData";
@@ -132,6 +137,8 @@ export default function App() {
   const pending = settled !== `${activeCoin.id}|${interval}|${range}`;
   const chartLoading = useDelayedFlag(!chartShown && pending, 300);
   const viewLoading = useDelayedFlag(!viewShown && pending, 300);
+  // Деривативы — своя загрузка и опрос (TASK-0007, план trade-off 5)
+  const derivatives = useDerivatives(activeCoin.id);
 
   return (
     <Wrapper>
@@ -193,6 +200,19 @@ export default function App() {
               capped={history.capped}
             />
           </TopRow>
+
+          {/* Под графиком, полной ширины: в BottomRow высоту держит левая
+              колонка (план TASK-0007, trade-off 6). Ошибка — пометкой, как
+              у карточки; данные прошлого опроса остаются под ней */}
+          <DerivativesRow>
+            {derivatives.error && (
+              <CardError>
+                Деривативы не обновились: {errorText(derivatives.error)}.
+              </CardError>
+            )}
+            {derivatives.data && <DerivativesPanel data={derivatives.data} />}
+            {derivatives.loading && <DerivativesPanelSkeleton />}
+          </DerivativesRow>
 
           <BottomRow>
             <Left>
@@ -311,6 +331,13 @@ const CardError = styled.div`
 
 // Кошелёк уехал из левой колонки в T6 — график занимает всю ширину
 const TopRow = styled.div`
+  margin-bottom: 16px;
+`;
+
+const DerivativesRow = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   margin-bottom: 16px;
 `;
 
