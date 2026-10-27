@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import styled from "styled-components";
-import { isAxiosError } from "axios";
 import { getCandles, getView } from "./api/market";
+import { classify, errorText } from "./api/errors";
+import type { LoadError } from "./api/errors";
 import { INTERVAL_MS, nearestAllowed } from "./types/market";
 import type { Interval, MarketSeries, MarketView, Range } from "./types/market";
 import {
@@ -24,33 +25,6 @@ const COINS = [
 ];
 
 type Tab = "market" | "intel";
-
-// Отказ чтения — три разные причины, три разных текста: «network» — бэкенд
-// не ответил; «binance» — бэкенд жив, но Binance не отдал данные (502);
-// «http» — бэкенд ответил другой ошибкой (400/404/500).
-type LoadError =
-  | { kind: "network" }
-  | { kind: "binance"; message: string }
-  | { kind: "http"; status: number }
-  | null;
-
-const classify = (e: unknown): LoadError => {
-  if (!isAxiosError(e) || !e.response) return { kind: "network" };
-  const { status, data } = e.response;
-  if (status === 502) {
-    const message =
-      typeof data?.message === "string" ? data.message : "Binance недоступен";
-    return { kind: "binance", message };
-  }
-  return { kind: "http", status };
-};
-
-const errorText = (e: NonNullable<LoadError>): string =>
-  e.kind === "network"
-    ? "Нет связи с бэкендом"
-    : e.kind === "binance"
-      ? e.message
-      : `Бэкенд вернул ошибку (код ${e.status})`;
 
 export default function App() {
   const [range, setRange] = useState<Range>("24h");
