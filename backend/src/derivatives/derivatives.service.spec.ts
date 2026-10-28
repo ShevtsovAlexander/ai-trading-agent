@@ -518,15 +518,15 @@ describe('DerivativesService.openInterestHistory', () => {
     expect(h.exchanges.every((e) => 'error' in e)).toBe(true);
   });
 
-  it('кэш полного ряда: до следующего часа + 2 мин — 0 запросов, после — заново', async () => {
+  it('кэш полного ряда: до следующего часа + 10 мин (выдержка OKX) — 0 запросов, после — заново', async () => {
     const { service, total, setNow } = makeOiService();
     await service.openInterestHistory('bitcoin', '1h');
     const first = total();
     const nextHour = Math.floor(OI_NOW / HOUR) * HOUR + HOUR;
-    setNow(nextHour + 2 * MIN - 1);
+    setNow(nextHour + 10 * MIN - 1);
     await service.openInterestHistory('bitcoin', '1h');
     expect(total()).toBe(first);
-    setNow(nextHour + 2 * MIN);
+    setNow(nextHour + 10 * MIN);
     await service.openInterestHistory('bitcoin', '1h');
     expect(total()).toBeGreaterThan(first);
   });
@@ -555,6 +555,28 @@ describe('DerivativesService.openInterestHistory', () => {
     expect(calls.binance.length).toBeGreaterThan(2);
   });
 
+  // Ноль в строке OKX (замер T4) — дыра в одном моменте: такой ряд не
+  // «полный» и не держится до следующего часа, а спрашивается через 60 с
+  it('дыра от нуля у OKX: остальные точки на месте, повтор через 60 с', async () => {
+    const rows = OI_FX.okx['1H'] as string[][];
+    const i = 200;
+    const saved = rows[i];
+    rows[i] = [saved[0], '0', '0', '0'];
+    try {
+      const { service, calls, setNow } = makeOiService();
+      const h = await service.openInterestHistory('bitcoin', '1h');
+      const gapT = Number(saved[0]) + HOUR; // момент OKX = метка + шаг
+      expect(h.points).toHaveLength(719);
+      expect(h.points.some((p) => p.t === gapT)).toBe(false);
+      expect(h.exchanges[1]).toEqual({ exchange: 'okx' });
+      setNow(OI_NOW + 60_000);
+      await service.openInterestHistory('bitcoin', '1h');
+      expect(calls.okx.length).toBeGreaterThan(8);
+    } finally {
+      rows[i] = saved;
+    }
+  });
+
   it('шаги и монеты — раздельные записи кэша', async () => {
     const { service, calls } = makeOiService();
     await service.openInterestHistory('bitcoin', '1d');
@@ -580,15 +602,15 @@ describe('DerivativesService.openInterestHistory', () => {
   const DAY_MS = 24 * HOUR;
   const nextDay = Math.floor(OI_NOW / DAY_MS) * DAY_MS + DAY_MS;
 
-  it('1d: полный ряд (последняя точка — сегодня 00:00) держится до 00:02 следующих суток', async () => {
+  it('1d: полный ряд (последняя точка — сегодня 00:00) держится до 00:10 следующих суток', async () => {
     const { service, total, setNow } = makeOiService();
     const h = await service.openInterestHistory('bitcoin', '1d');
     expect(h.points.at(-1)!.t).toBe(nextDay - DAY_MS);
     const first = total();
-    setNow(nextDay + 2 * MIN - 1);
+    setNow(nextDay + 10 * MIN - 1);
     await service.openInterestHistory('bitcoin', '1d');
     expect(total()).toBe(first);
-    setNow(nextDay + 2 * MIN);
+    setNow(nextDay + 10 * MIN);
     await service.openInterestHistory('bitcoin', '1d');
     expect(total()).toBeGreaterThan(first);
   });

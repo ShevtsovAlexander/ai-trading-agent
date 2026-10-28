@@ -9,6 +9,11 @@ export const OI_STEP_MS: Record<OiStep, number> = {
   '1d': DAY_MS,
   '1h': HOUR_MS,
 };
+// Строка OKX становится окончательной не сразу: самая свежая — живое
+// значение, предыдущая меняется ещё раз уже после появления новой и
+// устаивается к ~3 мин после момента; копии ответа бывают устаревшими
+// (замер T4, граница 15:00). Момент OKX берётся через 10 мин, с запасом
+export const OKX_SETTLE_MS = 10 * 60_000;
 
 export interface OiSeriesInput {
   step: OiStep;
@@ -24,8 +29,8 @@ export interface OiSeriesInput {
 
 // Ряд OI на сетке моментов. Метка биржи → момент снимка: Binance и Bybit —
 // снимок в метке, OKX — значение в метке + шаг (его свежая строка — живое
-// значение незакрытого периода, её момент позже now; research TASK-0008
-// «Дозамер»). Окно — моменты (now − 30 дн, now]. Точка — только там, где
+// значение и отбрасывается, как и моменты моложе OKX_SETTLE_MS; research
+// TASK-0008 «Дозамер», замер T4). Окно — моменты (now − 30 дн, now]. Точка — только там, где
 // есть все учтённые биржи: иначе дыра, а не сумма по двум (PRD 2). Цена —
 // close спот-свечи, открытой в t − шаг: она закрылась ровно в t.
 export function buildOiSeries(input: OiSeriesInput): OiPoint[] {
@@ -49,7 +54,15 @@ export function buildOiSeries(input: OiSeriesInput): OiPoint[] {
   const sources: [Exchange, Map<number, number>][] = [];
   if (input.binance)
     sources.push(['binance', byMoment(input.binance, 0, (r) => r.usd)]);
-  if (input.okx) sources.push(['okx', byMoment(input.okx, step, (r) => r.usd)]);
+  if (input.okx) {
+    // Самая свежая строка OKX не окончательная никогда — отбрасывается,
+    // остальные — только если момент старше OKX_SETTLE_MS
+    const newest = Math.max(...input.okx.map((r) => r.t));
+    const settled = input.okx.filter(
+      (r) => r.t !== newest && r.t + step <= now - OKX_SETTLE_MS,
+    );
+    sources.push(['okx', byMoment(settled, step, (r) => r.usd)]);
+  }
   if (input.bybit) {
     const { marks } = input.bybit;
     sources.push([

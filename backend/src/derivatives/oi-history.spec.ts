@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Candle } from '../market/market.types';
 import { OiPoint, OiStep } from './derivatives.types';
-import { OiSeriesInput, buildOiSeries } from './oi-history';
+import { OKX_SETTLE_MS, OiSeriesInput, buildOiSeries } from './oi-history';
 import { OiRow } from './sources';
 
 // Оракул — эталон независимого скрипта (scratchpad oi_oracle.py: сетка
@@ -138,6 +138,31 @@ describe('buildOiSeries: неполные данные', () => {
       expect(got.map((p) => p.t)).toEqual(expected.map((p) => p.t));
     },
   );
+
+  // Замер T4 на границе часа: самая свежая строка OKX — живое значение,
+  // предыдущая устаивается за минуты после момента
+  it('самая свежая строка OKX отбрасывается, даже если её момент в прошлом', () => {
+    const input = inputFor('1h');
+    const newest = Math.max(...input.okx!.map((r) => r.t));
+    // Как старая копия ответа: строки последнего часа ещё нет
+    input.okx = input.okx!.filter((r) => r.t !== newest);
+    const got = buildOiSeries(input);
+    // Момент бывшей предпоследней строки (newest − шаг + шаг) — без точки
+    expect(got.find((p) => p.t === newest)).toBeUndefined();
+    expect(got.at(-1)!.t).toBe(newest - HOUR);
+    expect(got).toHaveLength(719);
+  });
+
+  it.each([
+    [OKX_SETTLE_MS - 1, false],
+    [OKX_SETTLE_MS, true],
+  ])('момент OKX через %i мс после себя — в ряду: %s', (after, present) => {
+    const input = inputFor('1h');
+    const moment = Math.floor(NOW / HOUR) * HOUR; // 12:00 снимка
+    const got = buildOiSeries({ ...input, now: moment + after });
+    expect(got.some((p) => p.t === moment)).toBe(present);
+    expect(got.at(-1)!.t).toBe(present ? moment : moment - HOUR);
+  });
 
   it('все биржи null — пустой ряд', () => {
     const input = inputFor('1d');

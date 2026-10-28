@@ -651,6 +651,62 @@ describe('выход по from: страницы старше окна полн�
   );
 });
 
+// Замер T4: OKX на границе часа отдал строки с нулём (в т. ч. в середине
+// истории). Строка с 0 пропускается — дыра в одном моменте, а не отказ
+// всей биржи (решение человека, критик T4); отрицательное — ошибка
+describe('история OI: строка с 0 пропускается (замер T4)', () => {
+  it('Binance sumOpenInterestValue 0 → строки нет, остальные на месте', async () => {
+    const from = fromFor(DAY);
+    const zeroT = OI.binance['1d'][5].timestamp as number;
+    const rows = OI.binance['1d'].map((r, i) =>
+      i === 5 ? { ...r, sumOpenInterestValue: '0' } : r,
+    );
+    const got = await fetchOiHistoryBinance(
+      binanceFake(rows).http,
+      'BTCUSDT',
+      '1d',
+      from,
+    );
+    expect(got.map((r) => r.t)).toEqual(
+      OI.binance['1d']
+        .map((r) => r.timestamp as number)
+        .filter((t) => t >= from && t !== zeroT),
+    );
+  });
+
+  it('OKX oiUsd 0 в середине истории → строки нет, остальные на месте', async () => {
+    const from = fromFor(DAY);
+    const zeroT = Number(OI.okx['1Dutc'][3][0]);
+    const rows = OI.okx['1Dutc'].map((r, i) =>
+      i === 3 ? [r[0], '0', '0', '0'] : r,
+    );
+    const got = await fetchOiHistoryOkx(
+      okxFake(rows).http,
+      'BTC-USDT-SWAP',
+      '1Dutc',
+      from,
+    );
+    expect(got).toHaveLength(30);
+    expect(got.some((r) => r.t === zeroT)).toBe(false);
+    expect(got.every((r) => r.usd! > 0)).toBe(true);
+  });
+
+  it('Bybit openInterest 0 → строки нет', async () => {
+    const zeroT = Number(OI.bybit['1d'][2].timestamp);
+    const rows = OI.bybit['1d'].map((r, i) =>
+      i === 2 ? { ...r, openInterest: '0' } : r,
+    );
+    const got = await fetchOiHistoryBybit(
+      bybitFake(rows).http,
+      'BTCUSDT',
+      '1d',
+      fromFor(DAY),
+    );
+    expect(got).toHaveLength(30);
+    expect(got.some((r) => r.t === zeroT)).toBe(false);
+  });
+});
+
 describe('fetchMarkBybit', () => {
   it.each(['D', '60'] as const)(
     '%s: начало свечи → open, как в фикстуре',

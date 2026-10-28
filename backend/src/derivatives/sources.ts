@@ -229,6 +229,11 @@ export async function fetchOpenInterestBybit(
 // Bybit, значение в t + шаг у OKX), решает сборка ряда (research TASK-0008,
 // «Дозамер»). Строки — с t ≥ from, по возрастанию; пустой итог — ошибка
 // (Binance на неизвестный символ отвечает [] без кода, фикстура errors).
+// Строка с 0 пропускается — в сборке ряда это дыра в одном моменте: OKX на
+// границе часа отдавал нули, в том числе в середине истории (замер T4,
+// 15:01:50, через 20 с — норма). Ошибкой всей биржи 0 не считается: один
+// сбойный ноль выключал бы её из всех точек (решение человека, критик T4).
+// Отрицательное — по-прежнему ошибка; у текущего OI (TASK-0007) 0 допустим.
 export interface OiRow {
   t: number;
   usd?: number; // Binance, OKX — USD по своей цене снимка
@@ -236,7 +241,9 @@ export interface OiRow {
 }
 
 const sinceAsc = (src: string, rows: OiRow[], from: number): OiRow[] => {
-  const result = rows.filter((r) => r.t >= from).sort((a, b) => a.t - b.t);
+  const result = rows
+    .filter((r) => r.t >= from && (r.usd ?? r.coin) !== 0)
+    .sort((a, b) => a.t - b.t);
   if (result.length === 0) throw new Error(`${src}: нет данных`);
   return result;
 };

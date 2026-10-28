@@ -13,7 +13,12 @@ import {
   OpenInterestHistory,
   SourceError,
 } from './derivatives.types';
-import { OI_STEP_MS, OI_WINDOW_DAYS, buildOiSeries } from './oi-history';
+import {
+  OI_STEP_MS,
+  OI_WINDOW_DAYS,
+  OKX_SETTLE_MS,
+  buildOiSeries,
+} from './oi-history';
 import {
   fetchFunding,
   fetchFundingHistory,
@@ -40,9 +45,10 @@ const HOUR_MS = 3_600_000;
 const HISTORY_DAYS = STRESS_PERIOD_DAYS + 1;
 
 // История OI (TASK-0008): полный ряд держится до следующего момента сетки
-// + запас на публикацию бирж; неполный (ошибка, точка ещё не вышла) — 60 с,
-// как снимок с ошибками: повтор к упавшей бирже не на каждый опрос
-export const OI_PUBLISH_MARGIN_MS = 2 * 60_000;
+// + выдержка OKX — раньше новая точка в ряд не попадёт, запросы впустую
+// (критик T4); неполный (ошибка, дыра, точка ещё не вышла) — 60 с, как
+// снимок с ошибками: повтор к упавшей бирже не на каждый опрос
+export const OI_PUBLISH_MARGIN_MS = OKX_SETTLE_MS;
 export const OI_RETRY_MS = 60_000;
 
 const UNAVAILABLE: Record<Exchange, string> = {
@@ -236,13 +242,16 @@ export class DerivativesService {
       points,
     };
 
-    // Полон — нет ошибок и последняя точка — последний момент сетки ≤ now:
-    // новых данных до следующего момента не будет. Иначе повтор через 60 с
+    // Полон — нет ошибок, последняя точка — последний момент сетки ≤ now и
+    // дыр нет (все 30 дн. / шаг моментов окна): новых данных до следующего
+    // момента не будет. Иначе повтор через 60 с — дыра от сбойной строки
+    // (0 у OKX, замер T4) не закрепляется на час
     const lastMoment = Math.floor(now / stepMs) * stepMs;
     const complete =
       !Object.values(down).some(Boolean) &&
       !spotDown &&
-      points.at(-1)?.t === lastMoment;
+      points.at(-1)?.t === lastMoment &&
+      points.length === (OI_WINDOW_DAYS * DAY_MS) / stepMs;
     this.oiHistories.set(key, {
       until: complete
         ? lastMoment + stepMs + OI_PUBLISH_MARGIN_MS
