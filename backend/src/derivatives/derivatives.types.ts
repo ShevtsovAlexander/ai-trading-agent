@@ -67,3 +67,16 @@ export interface Derivatives {
   funding: FundingView | SourceError;
   openInterest: OpenInterestView;
 }
+
+// --- История OI (TASK-0008) ---
+// Шаг графика: по дням / по часам; окно всегда 30 дней
+export type OiStep = '1d' | '1h';
+
+// Точка ряда: OI учтённых бирж в один момент t (не метка биржи — у OKX
+// метка на шаг раньше момента, research TASK-0008 «Дозамер»)
+export interface OiPoint {
+  t: number; // момент снимка, мс UTC, на сетке шага
+  totalUsd: number; // сумма учтённых бирж в t
+  byExchange: Partial<Record<Exchange, number>>; // USD каждой учтённой биржи
+  price: number | null; // close спота Binance свечи, закрытой в t; null — нет свечи
+}
