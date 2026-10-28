@@ -4,7 +4,7 @@ import { BadRequestException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { of, throwError } from 'rxjs';
 import { DerivativesService, SNAPSHOT_TTL_MS } from './derivatives.service';
-import { FundingView, SourceError } from './derivatives.types';
+import { FundingView, OiPoint, OiStep, SourceError } from './derivatives.types';
 
 type Raw = Record<string, any>;
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment --
@@ -324,5 +324,300 @@ describe('DerivativesService.get', () => {
       BadRequestException,
     );
     expect(Object.values(count()).every((n) => n === 0)).toBe(true);
+  });
+});
+
+// --- История OI (TASK-0008.3) ---
+// Фейк по полному пути URL (не по подстроке: `openInterest` ловит и
+// `openInterestHist`, research TASK-0008 «Риски»). Ответы — фикстура BTC
+// 2026-10-28; листание — как у бирж (endTime включительно, end исключительно,
+// курсор), как фейки sources.spec.ts. Ожидание — эталон T2 (scratchpad
+// oi_oracle.py), а не вывод кода.
+const OI_FX = JSON.parse(
+  readFileSync(
+    join(__dirname, 'fixtures', 'oi-history-2026-10-28.json'),
+    'utf8',
+  ),
+) as Raw;
+const OI_NOW: number = OI_FX.capturedAt;
+const HOUR = 3_600_000;
+const MIN = 60_000;
+
+type OiSource = 'binance' | 'okx' | 'bybit' | 'mark' | 'spot';
+const oiSourceOf = (url: string): OiSource => {
+  if (url.endsWith('/futures/data/openInterestHist')) return 'binance';
+  if (url.endsWith('/rubik/stat/contracts/open-interest-history')) return 'okx';
+  if (url.endsWith('/v5/market/open-interest')) return 'bybit';
+  if (url.endsWith('/v5/market/mark-price-kline')) return 'mark';
+  if (url.endsWith('/api/v3/klines')) return 'spot';
+  throw new Error(`фейк: неожиданный URL ${url}`);
+};
+const OKX_PERIOD: Record<string, string> = { '1Dutc': '1Dutc', '1H': '1H' };
+const MARK_IV: Record<string, string> = { D: 'D', '60': '60' };
+
+const oiFake = () => {
+  const calls: Record<OiSource, Raw[]> = {
+    binance: [],
+    okx: [],
+    bybit: [],
+    mark: [],
+    spot: [],
+  };
+  const fail = new Set<OiSource>();
+  const reply = (src: OiSource, p: Raw): unknown => {
+    if (src === 'binance') {
+      const rows = (OI_FX.binance[p.period] as Raw[]).filter(
+        (r) => p.endTime === undefined || r.timestamp <= p.endTime,
+      );
+      return rows.slice(Math.max(0, rows.length - p.limit));
+    }
+    if (src === 'okx') {
+      return {
+        code: '0',
+        msg: '',
+        data: (OI_FX.okx[OKX_PERIOD[p.period]] as string[][])
+          .filter((r) => p.end === undefined || Number(r[0]) < p.end)
+          .slice(0, p.limit),
+      };
+    }
+    if (src === 'bybit') {
+      const rows = OI_FX.bybit[p.intervalTime] as Raw[];
+      const at = p.cursor === undefined ? 0 : Number(p.cursor);
+      const more = at + p.limit < rows.length;
+      return {
+        retCode: 0,
+        result: {
+          list: rows.slice(at, at + p.limit),
+          nextPageCursor: more ? String(at + p.limit) : '',
+        },
+      };
+    }
+    if (src === 'mark') {
+      return {
+        retCode: 0,
+        result: {
+          list: (OI_FX.bybitMark[MARK_IV[p.interval]] as string[][]).filter(
+            (r) => Number(r[0]) >= p.start && Number(r[0]) <= p.end,
+          ),
+        },
+      };
+    }
+    return (OI_FX.spot[p.interval] as any[][])
+      .filter((k) => k[0] >= p.startTime && k[0] <= p.endTime)
+      .slice(0, p.limit);
+  };
+  const http = {
+    get: (url: string, { params }: { params: Raw }) => {
+      const src = oiSourceOf(url);
+      calls[src].push(params);
+      if (fail.has(src)) {
+        return throwError(() => new Error(`${src}: ECONNREFUSED`));
+      }
+      return of({ data: reply(src, params), headers: {} });
+    },
+  };
+  return { http: http as unknown as HttpService, calls, fail };
+};
+
+const makeOiService = () => {
+  const { http, calls, fail } = oiFake();
+  const service = new DerivativesService(http);
+  let now = OI_NOW;
+  service.clock = () => now;
+  const total = () =>
+    Object.values(calls).reduce((sum, list) => sum + list.length, 0);
+  return { service, calls, fail, total, setNow: (t: number) => (now = t) };
+};
+
+const EXPECTED = OI_FX.expected as Record<OiStep, OiPoint[]>;
+
+describe('DerivativesService.openInterestHistory', () => {
+  jest.setTimeout(20_000);
+
+  it.each([
+    ['1d', 30],
+    ['1h', 720],
+  ] as const)(
+    '%s: ряд = эталону T2 (%i точек), форма по контракту',
+    async (step, count) => {
+      const { service, calls } = makeOiService();
+      const h = await service.openInterestHistory('bitcoin', step);
+      expect(h).toEqual({
+        coinId: 'bitcoin',
+        market: 'BTC/USDT',
+        step,
+        exchanges: [
+          { exchange: 'binance' },
+          { exchange: 'okx' },
+          { exchange: 'bybit' },
+        ],
+        priceError: null,
+        points: EXPECTED[step],
+      });
+      expect(h.points).toHaveLength(count);
+      // Шаг каждого источника — свой формат биржи
+      expect(calls.okx[0].period).toBe(step === '1d' ? '1Dutc' : '1H');
+      expect(calls.mark[0].interval).toBe(step === '1d' ? 'D' : '60');
+      expect(calls.spot[0].interval).toBe(step);
+      expect(calls.binance[0].period).toBe(step);
+      expect(calls.bybit[0].intervalTime).toBe(step);
+    },
+  );
+
+  it.each(['binance', 'okx', 'bybit'] as const)(
+    'упала %s: ошибка в её поле, сумма — по двум остальным во всех точках',
+    async (down) => {
+      const { service, fail } = makeOiService();
+      fail.add(down);
+      const h = await service.openInterestHistory('bitcoin', '1d');
+      expect(h.exchanges.find((e) => e.exchange === down)).toHaveProperty(
+        'error',
+      );
+      expect(h.points).toHaveLength(30);
+      h.points.forEach((p, i) => {
+        const e = EXPECTED['1d'][i].byExchange;
+        const rest = (['binance', 'okx', 'bybit'] as const).filter(
+          (x) => x !== down,
+        );
+        expect(Object.keys(p.byExchange).sort()).toEqual([...rest].sort());
+        expect(p.totalUsd).toBeCloseTo(e[rest[0]]! + e[rest[1]]!, 2);
+      });
+    },
+  );
+
+  it('упала только mark Bybit — Bybit «недоступен», без него в сумме', async () => {
+    const { service, fail } = makeOiService();
+    fail.add('mark');
+    const h = await service.openInterestHistory('bitcoin', '1h');
+    expect(h.exchanges[2]).toEqual({
+      exchange: 'bybit',
+      error: 'Bybit недоступен',
+    });
+    expect(h.points).toHaveLength(720);
+    expect(h.points.every((p) => !('bybit' in p.byExchange))).toBe(true);
+  });
+
+  it('упал спот: priceError, ряд OI цел, price null', async () => {
+    const { service, fail } = makeOiService();
+    fail.add('spot');
+    const h = await service.openInterestHistory('bitcoin', '1d');
+    expect(h.priceError).toBe('Binance недоступен');
+    expect(h.points.map((p) => p.totalUsd)).toEqual(
+      EXPECTED['1d'].map((p) => p.totalUsd),
+    );
+    expect(h.points.every((p) => p.price === null)).toBe(true);
+  });
+
+  it('упало всё: points пуст, маршрут не бросает', async () => {
+    const { service, fail } = makeOiService();
+    for (const s of ['binance', 'okx', 'bybit', 'mark', 'spot'] as const) {
+      fail.add(s);
+    }
+    const h = await service.openInterestHistory('bitcoin', '1h');
+    expect(h.points).toEqual([]);
+    expect(h.exchanges.every((e) => 'error' in e)).toBe(true);
+  });
+
+  it('кэш полного ряда: до следующего часа + 2 мин — 0 запросов, после — заново', async () => {
+    const { service, total, setNow } = makeOiService();
+    await service.openInterestHistory('bitcoin', '1h');
+    const first = total();
+    const nextHour = Math.floor(OI_NOW / HOUR) * HOUR + HOUR;
+    setNow(nextHour + 2 * MIN - 1);
+    await service.openInterestHistory('bitcoin', '1h');
+    expect(total()).toBe(first);
+    setNow(nextHour + 2 * MIN);
+    await service.openInterestHistory('bitcoin', '1h');
+    expect(total()).toBeGreaterThan(first);
+  });
+
+  it('ответ с ошибкой биржи держится 60 с, потом биржи спрашиваются снова', async () => {
+    const { service, fail, calls, setNow } = makeOiService();
+    fail.add('okx');
+    await service.openInterestHistory('bitcoin', '1d');
+    setNow(OI_NOW + 60_000 - 1);
+    await service.openInterestHistory('bitcoin', '1d');
+    expect(calls.okx).toHaveLength(1);
+    setNow(OI_NOW + 60_000);
+    await service.openInterestHistory('bitcoin', '1d');
+    expect(calls.okx).toHaveLength(2);
+  });
+
+  it('последний момент ещё не опубликован — не кэшируется на час, повтор через 60 с', async () => {
+    const { service, calls, setNow } = makeOiService();
+    // now на час позже снимка: точки за этот час в фикстуре нет
+    const later = OI_NOW + HOUR;
+    setNow(later);
+    const h = await service.openInterestHistory('bitcoin', '1h');
+    expect(h.points.at(-1)!.t).toBeLessThan(Math.floor(later / HOUR) * HOUR);
+    setNow(later + 60_000);
+    await service.openInterestHistory('bitcoin', '1h');
+    expect(calls.binance.length).toBeGreaterThan(2);
+  });
+
+  it('шаги и монеты — раздельные записи кэша', async () => {
+    const { service, calls } = makeOiService();
+    await service.openInterestHistory('bitcoin', '1d');
+    await service.openInterestHistory('bitcoin', '1h');
+    await service.openInterestHistory('ethereum', '1d');
+    expect(
+      calls.binance.map((p) => [p.symbol as string, p.period as string]),
+    ).toEqual([
+      ['BTCUSDT', '1d'],
+      ['BTCUSDT', '1h'],
+      ['BTCUSDT', '1h'],
+      ['ETHUSDT', '1d'],
+    ]);
+    // Символ монеты — у всех пяти источников, не только у Binance (критик T3)
+    expect(calls.okx.at(-1)!.instId).toBe('ETH-USDT-SWAP');
+    expect(calls.bybit.at(-1)!.symbol).toBe('ETHUSDT');
+    expect(calls.mark.at(-1)!.symbol).toBe('ETHUSDT');
+    expect(calls.spot.at(-1)!.symbol).toBe('ETHUSDT');
+  });
+
+  // Дневное правило кэша (критик T3): на 1h шаг и час совпадают, и мутант
+  // «час вместо шага» в lastMoment/until там не виден
+  const DAY_MS = 24 * HOUR;
+  const nextDay = Math.floor(OI_NOW / DAY_MS) * DAY_MS + DAY_MS;
+
+  it('1d: полный ряд (последняя точка — сегодня 00:00) держится до 00:02 следующих суток', async () => {
+    const { service, total, setNow } = makeOiService();
+    const h = await service.openInterestHistory('bitcoin', '1d');
+    expect(h.points.at(-1)!.t).toBe(nextDay - DAY_MS);
+    const first = total();
+    setNow(nextDay + 2 * MIN - 1);
+    await service.openInterestHistory('bitcoin', '1d');
+    expect(total()).toBe(first);
+    setNow(nextDay + 2 * MIN);
+    await service.openInterestHistory('bitcoin', '1d');
+    expect(total()).toBeGreaterThan(first);
+  });
+
+  it('1d, 00:00:30: точка за сегодня ещё не опубликована — повтор через 60 с, а не через сутки', async () => {
+    const { service, calls, setNow } = makeOiService();
+    const t0 = nextDay + 30_000;
+    setNow(t0);
+    const h = await service.openInterestHistory('bitcoin', '1d');
+    expect(h.points.at(-1)!.t).toBe(nextDay - DAY_MS); // вчерашняя
+    setNow(t0 + 60_000 - 1);
+    await service.openInterestHistory('bitcoin', '1d');
+    expect(calls.binance).toHaveLength(1);
+    setNow(t0 + 60_000);
+    await service.openInterestHistory('bitcoin', '1d');
+    expect(calls.binance).toHaveLength(2);
+  });
+
+  it.each([
+    ['dogecoin', '1d', /монета/],
+    ['bitcoin', '4h', /шаг/],
+    ['bitcoin', undefined, /шаг/],
+  ])('%s, шаг %s → 400 без запросов', async (coin, step, msg) => {
+    const { service, total } = makeOiService();
+    const call = service.openInterestHistory(coin, step as unknown as string);
+    await expect(call).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.openInterestHistory(coin, step as unknown as string),
+    ).rejects.toThrow(msg);
+    expect(total()).toBe(0);
   });
 });

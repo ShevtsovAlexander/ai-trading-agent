@@ -80,3 +80,15 @@ export interface OiPoint {
   byExchange: Partial<Record<Exchange, number>>; // USD каждой учтённой биржи
   price: number | null; // close спота Binance свечи, закрытой в t; null — нет свечи
 }
+
+// Ответ GET /derivatives/:coinId/open-interest?step= (зеркало —
+// frontend/src/types/derivatives.ts). Отказ биржи — в её поле, биржа выпадает
+// из суммы всех точек; все три упали — points пуст (план TASK-0008)
+export interface OpenInterestHistory {
+  coinId: string;
+  market: string;
+  step: OiStep;
+  exchanges: ({ exchange: Exchange } | { exchange: Exchange; error: string })[]; // всегда binance, okx, bybit
+  priceError: string | null; // спот недоступен — у всех точек price null
+  points: OiPoint[]; // по возрастанию t; дыра — шаг между соседями больше step
+}
