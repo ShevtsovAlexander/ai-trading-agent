@@ -17,6 +17,8 @@ import {
   DerivativesPanelSkeleton,
 } from "./components/DerivativesPanel";
 import { useDerivatives } from "./hooks/useDerivatives";
+import { useOpenInterestHistory } from "./hooks/useOpenInterestHistory";
+import type { OiStep } from "./types/derivatives";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
 import { useChartHistory } from "./hooks/useChartHistory";
 import { mergeSeries } from "./components/chartData";
@@ -139,6 +141,10 @@ export default function App() {
   const viewLoading = useDelayedFlag(!viewShown && pending, 300);
   // Деривативы — своя загрузка и опрос (TASK-0007, план trade-off 5)
   const derivatives = useDerivatives(activeCoin.id);
+  // История OI — шаг «По дням» по умолчанию, почасовой ряд только по выбору
+  // (TASK-0008, PRD 8). Карточка и переключатель шага — TASK-0008.6
+  const [oiStep] = useState<OiStep>("1d");
+  useOpenInterestHistory(activeCoin.id, oiStep);
 
   return (
     <Wrapper>
