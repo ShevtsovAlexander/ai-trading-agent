@@ -16,7 +16,10 @@ import {
   DerivativesPanel,
   DerivativesPanelSkeleton,
 } from "./components/DerivativesPanel";
+import { OpenInterestChart } from "./components/OpenInterestChart";
 import { useDerivatives } from "./hooks/useDerivatives";
+import { useOpenInterestHistory } from "./hooks/useOpenInterestHistory";
+import type { OiStep } from "./types/derivatives";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
 import { useChartHistory } from "./hooks/useChartHistory";
 import { mergeSeries } from "./components/chartData";
@@ -139,6 +142,10 @@ export default function App() {
   const viewLoading = useDelayedFlag(!viewShown && pending, 300);
   // Деривативы — своя загрузка и опрос (TASK-0007, план trade-off 5)
   const derivatives = useDerivatives(activeCoin.id);
+  // История OI — шаг «По дням» по умолчанию, почасовой ряд только по выбору
+  // (TASK-0008, PRD 8)
+  const [oiStep, setOiStep] = useState<OiStep>("1d");
+  const oiHistory = useOpenInterestHistory(activeCoin.id, oiStep);
 
   return (
     <Wrapper>
@@ -212,6 +219,22 @@ export default function App() {
             )}
             {derivatives.data && <DerivativesPanel data={derivatives.data} />}
             {derivatives.loading && <DerivativesPanelSkeleton />}
+            {/* История OI — своя карточка, не внутри панели: панель видна
+                только при данных /derivatives (план TASK-0008, trade-off 6).
+                Карточка смонтирована всегда — график не пересоздаётся; ошибка
+                опроса — над ней, прошлый ряд остаётся */}
+            {oiHistory.error && (
+              <CardError>
+                График позиций не обновился: {errorText(oiHistory.error)}.
+              </CardError>
+            )}
+            <OpenInterestChart
+              data={oiHistory.data}
+              market={activeCoin.market}
+              step={oiStep}
+              onStepChange={setOiStep}
+              loading={oiHistory.loading}
+            />
           </DerivativesRow>
 
           <BottomRow>

@@ -24,3 +24,13 @@ GET http://localhost:3000/derivatives/bitcoin
 
 # Неизвестная монета — 400
 GET http://localhost:3000/derivatives/dogecoin
+
+###
+
+# История OI Binance + OKX + Bybit за 30 дней по дням + цена спота (TASK-0008)
+GET http://localhost:3000/derivatives/bitcoin/open-interest?step=1d
+
+###
+
+# То же по часам (~720 точек, 16 запросов к биржам на промах кэша)
+GET http://localhost:3000/derivatives/bitcoin/open-interest?step=1h

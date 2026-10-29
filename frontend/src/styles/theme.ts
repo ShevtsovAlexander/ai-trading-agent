@@ -35,6 +35,9 @@ export const theme = {
         bandFill: `${palette.ink}0a`,
         grid: palette.surfaceSoft,
         crosshair: palette.muted,
+        // Открытые позиции (TASK-0008): сумма — светлой, цена — тонкой серой
+        oi: palette.bodyStrong,
+        oiPrice: palette.muted,
     },
     font: {
         sans: '"Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { fetchClosedCandles } from '../binance/klines';
 import { COINS } from '../market/market.types';
 import {
   DERIVATIVE_SYMBOLS,
@@ -8,11 +9,23 @@ import {
   ExchangeOpenInterest,
   FundingPayment,
   FundingView,
+  OiStep,
+  OpenInterestHistory,
   SourceError,
 } from './derivatives.types';
 import {
+  OI_STEP_MS,
+  OI_WINDOW_DAYS,
+  OKX_SETTLE_MS,
+  buildOiSeries,
+} from './oi-history';
+import {
   fetchFunding,
   fetchFundingHistory,
+  fetchMarkBybit,
+  fetchOiHistoryBinance,
+  fetchOiHistoryBybit,
+  fetchOiHistoryOkx,
   fetchOpenInterestBinance,
   fetchOpenInterestBybit,
   fetchOpenInterestOkx,
@@ -30,6 +43,13 @@ const HOUR_MS = 3_600_000;
 // Историю берём на день глубже окна: у первой выплаты окна должна быть
 // предыдущая, иначе её шаг не проверить (stress.ts)
 const HISTORY_DAYS = STRESS_PERIOD_DAYS + 1;
+
+// История OI (TASK-0008): полный ряд держится до следующего момента сетки
+// + выдержка OKX — раньше новая точка в ряд не попадёт, запросы впустую
+// (критик T4); неполный (ошибка, дыра, точка ещё не вышла) — 60 с, как
+// снимок с ошибками: повтор к упавшей бирже не на каждый опрос
+export const OI_PUBLISH_MARGIN_MS = OKX_SETTLE_MS;
+export const OI_RETRY_MS = 60_000;
 
 const UNAVAILABLE: Record<Exchange, string> = {
   binance: 'Binance недоступен',
@@ -51,6 +71,10 @@ export class DerivativesService {
   private readonly histories = new Map<
     string,
     { until: number; payments: FundingPayment[] }
+  >();
+  private readonly oiHistories = new Map<
+    string,
+    { until: number; value: OpenInterestHistory }
   >();
 
   // Часы — поле, чтобы тест мог сдвинуть время
@@ -137,6 +161,103 @@ export class DerivativesService {
     // Кэшируется и ответ с ошибками: повтор к упавшей бирже — через 30 с,
     // а не на каждый опрос
     this.snapshots.set(coinId, { at: now, value });
+    return value;
+  }
+
+  // Ряд OI трёх бирж за 30 дней и цена спота Binance (TASK-0008). Пять
+  // источников независимы (allSettled): отказ биржи — текст в её поле, биржа
+  // выпадает из суммы всех точек; Bybit без своей mark в USD не перевести —
+  // упал любой из двух его запросов, Bybit целиком «недоступен». Сборка —
+  // buildOiSeries (сдвиг меток OKX, окно, дыры).
+  async openInterestHistory(
+    coinId: string,
+    step: string,
+  ): Promise<OpenInterestHistory> {
+    if (
+      !Object.hasOwn(DERIVATIVE_SYMBOLS, coinId) ||
+      !Object.hasOwn(COINS, coinId)
+    ) {
+      throw new BadRequestException(`Неизвестная монета: ${coinId}`);
+    }
+    if (!Object.hasOwn(OI_STEP_MS, step)) {
+      throw new BadRequestException(`Неизвестный шаг: ${step} (1d или 1h)`);
+    }
+    const st = step as OiStep;
+    const now = this.clock();
+    const key = `${coinId}|${st}`;
+    const cached = this.oiHistories.get(key);
+    if (cached && now < cached.until) return cached.value;
+
+    const stepMs = OI_STEP_MS[st];
+    const daily = st === '1d';
+    // Шаг запаса слева: у OKX момент первой точки окна — метка на шаг раньше
+    const from = now - OI_WINDOW_DAYS * DAY_MS - stepMs;
+    const symbols = DERIVATIVE_SYMBOLS[coinId];
+    const [binanceR, okxR, bybitR, markR, spotR] = await Promise.allSettled([
+      fetchOiHistoryBinance(this.http, symbols.binance, st, from),
+      fetchOiHistoryOkx(this.http, symbols.okx, daily ? '1Dutc' : '1H', from),
+      fetchOiHistoryBybit(this.http, symbols.bybit, st, from),
+      fetchMarkBybit(this.http, symbols.bybit, daily ? 'D' : '60', from, now),
+      // Свеча, открытая в t − шаг, закрылась в t — её close и есть цена в t;
+      // первый момент окна > now − 30 дн, значит его свеча открыта после from
+      fetchClosedCandles(this.http, COINS[coinId].symbol, st, from, now, now),
+    ]);
+
+    const failed = (what: string, r: PromiseSettledResult<unknown>) => {
+      if (r.status === 'rejected') this.fail(coinId, `${what} ${st}`, r.reason);
+      return r.status === 'rejected';
+    };
+    const binanceDown = failed('история OI binance', binanceR);
+    const okxDown = failed('история OI okx', okxR);
+    const bybitDown = failed('история OI bybit', bybitR);
+    const markDown = failed('mark bybit', markR);
+    const spotDown = failed('спот', spotR);
+
+    const points = buildOiSeries({
+      step: st,
+      now,
+      binance: binanceR.status === 'fulfilled' ? binanceR.value : null,
+      okx: okxR.status === 'fulfilled' ? okxR.value : null,
+      bybit:
+        bybitR.status === 'fulfilled' && markR.status === 'fulfilled'
+          ? { rows: bybitR.value, marks: markR.value }
+          : null,
+      spot: spotR.status === 'fulfilled' ? spotR.value.candles : null,
+    });
+    const down: Record<Exchange, boolean> = {
+      binance: binanceDown,
+      okx: okxDown,
+      bybit: bybitDown || markDown,
+    };
+    const value: OpenInterestHistory = {
+      coinId,
+      market: COINS[coinId].market,
+      step: st,
+      exchanges: (['binance', 'okx', 'bybit'] as const).map((exchange) =>
+        down[exchange]
+          ? { exchange, error: UNAVAILABLE[exchange] }
+          : { exchange },
+      ),
+      priceError: spotDown ? 'Binance недоступен' : null,
+      points,
+    };
+
+    // Полон — нет ошибок, последняя точка — последний момент сетки ≤ now и
+    // дыр нет (все 30 дн. / шаг моментов окна): новых данных до следующего
+    // момента не будет. Иначе повтор через 60 с — дыра от сбойной строки
+    // (0 у OKX, замер T4) не закрепляется на час
+    const lastMoment = Math.floor(now / stepMs) * stepMs;
+    const complete =
+      !Object.values(down).some(Boolean) &&
+      !spotDown &&
+      points.at(-1)?.t === lastMoment &&
+      points.length === (OI_WINDOW_DAYS * DAY_MS) / stepMs;
+    this.oiHistories.set(key, {
+      until: complete
+        ? lastMoment + stepMs + OI_PUBLISH_MARGIN_MS
+        : now + OI_RETRY_MS,
+      value,
+    });
     return value;
   }
 

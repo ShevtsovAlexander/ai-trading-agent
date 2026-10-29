@@ -5,6 +5,10 @@ import { of } from 'rxjs';
 import {
   fetchFunding,
   fetchFundingHistory,
+  fetchMarkBybit,
+  fetchOiHistoryBinance,
+  fetchOiHistoryBybit,
+  fetchOiHistoryOkx,
   fetchOpenInterestBinance,
   fetchOpenInterestBybit,
   fetchOpenInterestOkx,
@@ -306,6 +310,453 @@ describe('fetchFundingHistory', () => {
     const { http } = replying([{ fundingTime: H0, fundingRate: 'x' }]);
     await expect(fetchFundingHistory(http, 'BTCUSDT', H0, H0)).rejects.toThrow(
       /fundingRate/,
+    );
+  });
+});
+
+// --- История OI (TASK-0008.1) ---
+// Реальные ответы BTC (снимок 2026-10-28, все страницы) — оракул разбора:
+// ожидание строится из полей фикстуры, а не из кода. Фейки честно применяют
+// endTime / end / cursor / limit, как биржи (стыки — research TASK-0008).
+interface OiLive {
+  capturedAt: number;
+  binance: Record<'1d' | '1h', Raw[]>; // по возрастанию, как Binance
+  okx: Record<'1Dutc' | '1H', string[][]>; // новые первыми, как OKX
+  bybit: Record<'1d' | '1h', Raw[]>; // новые первыми, как Bybit
+  bybitMark: Record<'D' | '60', string[][]>;
+  errors: Record<
+    'binanceSymbol' | 'binanceStartTime' | 'okx' | 'bybit' | 'bybitMark',
+    unknown
+  >;
+}
+const OI = JSON.parse(
+  readFileSync(
+    join(__dirname, 'fixtures', 'oi-history-2026-10-28.json'),
+    'utf8',
+  ),
+) as OiLive;
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+// Окно сервиса: 30 дней и шаг запаса
+const fromFor = (step: number) => OI.capturedAt - 30 * DAY - step;
+
+type Call = { url: string; params: Record<string, any> };
+const recording = (reply: (params: Record<string, any>) => unknown) => {
+  const calls: Call[] = [];
+  const http = {
+    get: (url: string, { params }: { params: Record<string, any> }) => {
+      calls.push({ url, params });
+      return of({ data: reply(params), headers: {} });
+    },
+  };
+  return { http: http as unknown as HttpService, calls };
+};
+
+// Binance: последние limit строк с timestamp ≤ endTime (включительно)
+const binanceFake = (rows: Raw[]) =>
+  recording((p) => {
+    const upTo = rows.filter(
+      (r) => p.endTime === undefined || r.timestamp <= p.endTime,
+    );
+    return upTo.slice(Math.max(0, upTo.length - p.limit));
+  });
+// OKX: первые limit строк (новые первыми) с ts < end (исключительно)
+const okxFake = (rows: string[][]) =>
+  recording((p) => ({
+    code: '0',
+    msg: '',
+    data: rows
+      .filter((r) => p.end === undefined || Number(r[0]) < p.end)
+      .slice(0, p.limit),
+  }));
+// Bybit: курсор — смещение в списке (новые первыми)
+const bybitFake = (rows: Raw[]) =>
+  recording((p) => {
+    const at = p.cursor === undefined ? 0 : Number(p.cursor);
+    const list = rows.slice(at, at + p.limit);
+    const more = at + p.limit < rows.length;
+    return {
+      retCode: 0,
+      retMsg: 'OK',
+      result: { list, nextPageCursor: more ? String(at + p.limit) : '' },
+    };
+  });
+
+describe('fetchOiHistoryBinance', () => {
+  it.each([
+    ['1d', DAY, 30, 1],
+    ['1h', HOUR, 720, 2],
+  ] as const)(
+    '%s: строки окна = поля фикстуры (%i шт. за %i запр.), по возрастанию',
+    async (period, step, count, requests) => {
+      const from = fromFor(step);
+      const { http, calls } = binanceFake(OI.binance[period]);
+      const rows = await fetchOiHistoryBinance(http, 'BTCUSDT', period, from);
+      const expected = OI.binance[period]
+        .filter((r) => r.timestamp >= from)
+        .map((r) => ({ t: r.timestamp, usd: Number(r.sumOpenInterestValue) }));
+      expect(rows).toEqual(expected);
+      expect(rows).toHaveLength(count);
+      expect(calls).toHaveLength(requests);
+      expect(calls[0].params).toEqual({
+        symbol: 'BTCUSDT',
+        period,
+        limit: 500,
+      });
+      // Вторая страница — левее первой на мс, без дубля стыка
+      if (requests > 1) {
+        expect(calls[1].params.endTime).toBe(
+          OI.binance[period].at(-500)!.timestamp - 1,
+        );
+      }
+      expect(new Set(rows.map((r) => r.t)).size).toBe(rows.length);
+    },
+  );
+
+  it('ошибка в теле (-1130, startTime старше 30 дней) → ошибка с кодом', async () => {
+    const { http } = recording(() => OI.errors.binanceStartTime);
+    await expect(
+      fetchOiHistoryBinance(http, 'BTCUSDT', '1h', fromFor(HOUR)),
+    ).rejects.toThrow(/-1130/);
+  });
+
+  it('неизвестный символ: Binance отвечает [] → «нет данных», не пустой ряд', async () => {
+    expect(OI.errors.binanceSymbol).toEqual([]);
+    const { http } = recording(() => OI.errors.binanceSymbol);
+    await expect(
+      fetchOiHistoryBinance(http, 'XXXUSDT', '1h', fromFor(HOUR)),
+    ).rejects.toThrow(/нет данных/);
+  });
+
+  it('фейк без endTime (страница не сдвинулась) → ошибка, а не вечный цикл', async () => {
+    const { http, calls } = recording(() => OI.binance['1h'].slice(-500));
+    await expect(
+      fetchOiHistoryBinance(http, 'BTCUSDT', '1h', fromFor(HOUR)),
+    ).rejects.toThrow(/не сдвинулась/);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('отрицательный и пустой sumOpenInterestValue → ошибка', async () => {
+    for (const bad of ['-1', ' ']) {
+      const rows = OI.binance['1d'].map((r, i) =>
+        i === 3 ? { ...r, sumOpenInterestValue: bad } : r,
+      );
+      await expect(
+        fetchOiHistoryBinance(
+          binanceFake(rows).http,
+          'BTCUSDT',
+          '1d',
+          fromFor(DAY),
+        ),
+      ).rejects.toThrow(/sumOpenInterestValue/);
+    }
+  });
+});
+
+describe('fetchOiHistoryOkx', () => {
+  it.each([
+    ['1Dutc', DAY, 31, 1],
+    ['1H', HOUR, 721, 8],
+  ] as const)(
+    '%s: строки окна = 4-й элемент фикстуры (%i шт. за %i запр.), метки как у OKX',
+    async (period, step, count, requests) => {
+      const from = fromFor(step);
+      const { http, calls } = okxFake(OI.okx[period]);
+      const rows = await fetchOiHistoryOkx(http, 'BTC-USDT-SWAP', period, from);
+      const expected = OI.okx[period]
+        .filter((r) => Number(r[0]) >= from)
+        .map((r) => ({ t: Number(r[0]), usd: Number(r[3]) }))
+        .reverse();
+      expect(rows).toEqual(expected);
+      expect(rows).toHaveLength(count);
+      expect(calls).toHaveLength(requests);
+      expect(calls[0].params).toEqual({
+        instId: 'BTC-USDT-SWAP',
+        period,
+        limit: 100,
+      });
+      if (requests > 1) {
+        // end — самая старая метка прошлой страницы (у OKX исключительно)
+        expect(calls[1].params.end).toBe(Number(OI.okx[period][99][0]));
+      }
+      expect(new Set(rows.map((r) => r.t)).size).toBe(rows.length);
+    },
+  );
+
+  it('ошибка OKX в теле при HTTP 200 (51001) → ошибка с текстом биржи', async () => {
+    const { http } = recording(() => OI.errors.okx);
+    await expect(
+      fetchOiHistoryOkx(http, 'XXX-USDT-SWAP', '1H', fromFor(HOUR)),
+    ).rejects.toThrow(/51001/);
+  });
+
+  it('страница не сдвинулась → ошибка', async () => {
+    const { http } = recording(() => ({
+      code: '0',
+      data: OI.okx['1H'].slice(0, 100),
+    }));
+    await expect(
+      fetchOiHistoryOkx(http, 'BTC-USDT-SWAP', '1H', fromFor(HOUR)),
+    ).rejects.toThrow(/не сдвинулась/);
+  });
+
+  it('нет oiUsd в строке → ошибка, не NaN', async () => {
+    const rows = OI.okx['1Dutc'].map((r, i) => (i === 2 ? r.slice(0, 3) : r));
+    await expect(
+      fetchOiHistoryOkx(
+        okxFake(rows).http,
+        'BTC-USDT-SWAP',
+        '1Dutc',
+        fromFor(DAY),
+      ),
+    ).rejects.toThrow(/oiUsd/);
+  });
+});
+
+describe('fetchOiHistoryBybit', () => {
+  it.each([
+    ['1d', DAY, 31, 1],
+    ['1h', HOUR, 721, 4],
+  ] as const)(
+    '%s: строки окна = openInterest фикстуры в монетах (%i шт. за %i запр.)',
+    async (interval, step, count, requests) => {
+      const from = fromFor(step);
+      const { http, calls } = bybitFake(OI.bybit[interval]);
+      const rows = await fetchOiHistoryBybit(http, 'BTCUSDT', interval, from);
+      const expected = OI.bybit[interval]
+        .filter((r) => Number(r.timestamp) >= from)
+        .map((r) => ({ t: Number(r.timestamp), coin: Number(r.openInterest) }))
+        .reverse();
+      expect(rows).toEqual(expected);
+      expect(rows).toHaveLength(count);
+      expect(calls).toHaveLength(requests);
+      expect(calls[0].params).toEqual({
+        category: 'linear',
+        symbol: 'BTCUSDT',
+        intervalTime: interval,
+        limit: 200,
+      });
+      expect(new Set(rows.map((r) => r.t)).size).toBe(rows.length);
+    },
+  );
+
+  it('ошибка Bybit в теле при HTTP 200 (10001) → ошибка', async () => {
+    const { http } = recording(() => OI.errors.bybit);
+    await expect(
+      fetchOiHistoryBybit(http, 'XXXUSDT', '1h', fromFor(HOUR)),
+    ).rejects.toThrow(/10001/);
+  });
+
+  it('курсор не двигает страницу → ошибка, а не вечный цикл', async () => {
+    const { http, calls } = recording(() => ({
+      retCode: 0,
+      result: { list: OI.bybit['1h'].slice(0, 200), nextPageCursor: 'same' },
+    }));
+    await expect(
+      fetchOiHistoryBybit(http, 'BTCUSDT', '1h', fromFor(HOUR)),
+    ).rejects.toThrow(/не сдвинулась/);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('отрицательный openInterest → ошибка', async () => {
+    const rows = OI.bybit['1d'].map((r, i) =>
+      i === 1 ? { ...r, openInterest: '-5' } : r,
+    );
+    await expect(
+      fetchOiHistoryBybit(bybitFake(rows).http, 'BTCUSDT', '1d', fromFor(DAY)),
+    ).rejects.toThrow(/openInterest/);
+  });
+});
+
+// Фикстура обрезана (окно + 2 дня): последняя страница в ней всегда
+// неполная, и выход по from тестами выше не проверяется (критик T1). Здесь
+// история старше окна добита синтетикой до полных страниц — функция обязана
+// остановиться на первой странице, ушедшей левее from, а не листать до конца.
+const PAD = 2000; // строк старше самой старой в фикстуре
+const older = (oldest: number, step: number) =>
+  Array.from({ length: PAD }, (_, i) => oldest - (i + 1) * step);
+
+describe('выход по from: страницы старше окна полные (критик T1)', () => {
+  it.each([
+    ['1d', DAY, 1],
+    ['1h', HOUR, 2],
+  ] as const)(
+    'Binance %s (шаг %i мс): %i запр., строки — только окно',
+    async (period, step, requests) => {
+      const rows = OI.binance[period];
+      const pad = older(rows[0].timestamp, step)
+        .reverse()
+        .map((t) => ({ ...rows[0], timestamp: t }));
+      const from = fromFor(step);
+      // Ожидание — по всему, что отдаёт фейк: у Binance первая метка
+      // фикстуры позже from, и синтетическая строка может попасть в окно
+      const all: Raw[] = [...pad, ...rows];
+      const { http, calls } = binanceFake(all);
+      const got = await fetchOiHistoryBinance(http, 'BTCUSDT', period, from);
+      expect(got.map((r) => r.t)).toEqual(
+        all.map((r) => Number(r.timestamp)).filter((t) => t >= from),
+      );
+      expect(calls).toHaveLength(requests);
+    },
+  );
+
+  it.each([
+    ['1Dutc', DAY, 1],
+    ['1H', HOUR, 8],
+  ] as const)(
+    'OKX %s (шаг %i мс): %i запр., строки — только окно',
+    async (period, step, requests) => {
+      const rows = OI.okx[period];
+      const last = rows[rows.length - 1];
+      const pad = older(Number(last[0]), step).map((t) => [
+        String(t),
+        ...last.slice(1),
+      ]);
+      const from = fromFor(step);
+      const { http, calls } = okxFake([...rows, ...pad]);
+      const got = await fetchOiHistoryOkx(http, 'BTC-USDT-SWAP', period, from);
+      expect(got.map((r) => r.t)).toEqual(
+        rows
+          .filter((r) => Number(r[0]) >= from)
+          .map((r) => Number(r[0]))
+          .reverse(),
+      );
+      expect(calls).toHaveLength(requests);
+    },
+  );
+
+  it.each([
+    ['1d', DAY, 1],
+    ['1h', HOUR, 4],
+  ] as const)(
+    'Bybit %s (шаг %i мс): %i запр., строки — только окно',
+    async (interval, step, requests) => {
+      const rows = OI.bybit[interval];
+      const last = rows[rows.length - 1];
+      const pad = older(Number(last.timestamp), step).map((t) => ({
+        ...last,
+        timestamp: String(t),
+      }));
+      const from = fromFor(step);
+      const { http, calls } = bybitFake([...rows, ...pad]);
+      const got = await fetchOiHistoryBybit(http, 'BTCUSDT', interval, from);
+      expect(got.map((r) => r.t)).toEqual(
+        rows
+          .filter((r) => Number(r.timestamp) >= from)
+          .map((r) => Number(r.timestamp))
+          .reverse(),
+      );
+      expect(calls).toHaveLength(requests);
+    },
+  );
+});
+
+// Замер T4: OKX на границе часа отдал строки с нулём (в т. ч. в середине
+// истории). Строка с 0 пропускается — дыра в одном моменте, а не отказ
+// всей биржи (решение человека, критик T4); отрицательное — ошибка
+describe('история OI: строка с 0 пропускается (замер T4)', () => {
+  it('Binance sumOpenInterestValue 0 → строки нет, остальные на месте', async () => {
+    const from = fromFor(DAY);
+    const zeroT = OI.binance['1d'][5].timestamp as number;
+    const rows = OI.binance['1d'].map((r, i) =>
+      i === 5 ? { ...r, sumOpenInterestValue: '0' } : r,
+    );
+    const got = await fetchOiHistoryBinance(
+      binanceFake(rows).http,
+      'BTCUSDT',
+      '1d',
+      from,
+    );
+    expect(got.map((r) => r.t)).toEqual(
+      OI.binance['1d']
+        .map((r) => r.timestamp as number)
+        .filter((t) => t >= from && t !== zeroT),
+    );
+  });
+
+  it('OKX oiUsd 0 в середине истории → строки нет, остальные на месте', async () => {
+    const from = fromFor(DAY);
+    const zeroT = Number(OI.okx['1Dutc'][3][0]);
+    const rows = OI.okx['1Dutc'].map((r, i) =>
+      i === 3 ? [r[0], '0', '0', '0'] : r,
+    );
+    const got = await fetchOiHistoryOkx(
+      okxFake(rows).http,
+      'BTC-USDT-SWAP',
+      '1Dutc',
+      from,
+    );
+    expect(got).toHaveLength(30);
+    expect(got.some((r) => r.t === zeroT)).toBe(false);
+    expect(got.every((r) => r.usd! > 0)).toBe(true);
+  });
+
+  it('Bybit openInterest 0 → строки нет', async () => {
+    const zeroT = Number(OI.bybit['1d'][2].timestamp);
+    const rows = OI.bybit['1d'].map((r, i) =>
+      i === 2 ? { ...r, openInterest: '0' } : r,
+    );
+    const got = await fetchOiHistoryBybit(
+      bybitFake(rows).http,
+      'BTCUSDT',
+      '1d',
+      fromFor(DAY),
+    );
+    expect(got).toHaveLength(30);
+    expect(got.some((r) => r.t === zeroT)).toBe(false);
+  });
+});
+
+describe('fetchMarkBybit', () => {
+  it.each(['D', '60'] as const)(
+    '%s: начало свечи → open, как в фикстуре',
+    async (interval) => {
+      const list = OI.bybitMark[interval];
+      const { http, calls } = recording(() => ({
+        retCode: 0,
+        result: { list },
+      }));
+      const marks = await fetchMarkBybit(http, 'BTCUSDT', interval, 1, 2);
+      expect(marks.size).toBe(list.length);
+      for (const row of list)
+        expect(marks.get(Number(row[0]))).toBe(Number(row[1]));
+      expect(calls[0].params).toEqual({
+        category: 'linear',
+        symbol: 'BTCUSDT',
+        interval,
+        start: 1,
+        end: 2,
+        limit: 1000,
+      });
+    },
+  );
+
+  it('ошибка Bybit в теле (10001) → ошибка', async () => {
+    const { http } = recording(() => OI.errors.bybitMark);
+    await expect(fetchMarkBybit(http, 'XXXUSDT', '60', 1, 2)).rejects.toThrow(
+      /10001/,
+    );
+  });
+
+  it('полная страница (1000) — окно обрезано → ошибка, а не цены с дырой', async () => {
+    const list = Array.from({ length: 1000 }, (_, i) => [
+      String((i + 1) * HOUR),
+      '1',
+      '1',
+      '1',
+      '1',
+    ]);
+    const { http } = recording(() => ({ retCode: 0, result: { list } }));
+    await expect(fetchMarkBybit(http, 'BTCUSDT', '60', 1, 2)).rejects.toThrow(
+      /обрезано/,
+    );
+  });
+
+  it('open 0 → ошибка (цена строго > 0)', async () => {
+    const list = [['1000', '0', '1', '1', '1']];
+    const { http } = recording(() => ({ retCode: 0, result: { list } }));
+    await expect(fetchMarkBybit(http, 'BTCUSDT', '60', 1, 2)).rejects.toThrow(
+      /open/,
     );
   });
 });
