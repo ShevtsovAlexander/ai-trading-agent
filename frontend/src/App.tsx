@@ -19,6 +19,7 @@ import {
 import { OpenInterestChart } from "./components/OpenInterestChart";
 import { useDerivatives } from "./hooks/useDerivatives";
 import { useOpenInterestHistory } from "./hooks/useOpenInterestHistory";
+import { useOrderBook } from "./hooks/useOrderBook";
 import type { OiStep } from "./types/derivatives";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
 import { useChartHistory } from "./hooks/useChartHistory";
@@ -146,6 +147,8 @@ export default function App() {
   // (TASK-0008, PRD 8)
   const [oiStep, setOiStep] = useState<OiStep>("1d");
   const oiHistory = useOpenInterestHistory(activeCoin.id, oiStep);
+  // Стакан — своя загрузка, опрос 20 с (TASK-0009, план «Поток данных»)
+  const orderBook = useOrderBook(activeCoin.id);
 
   return (
     <Wrapper>
@@ -192,6 +195,13 @@ export default function App() {
           )}
 
           <TopRow>
+            {/* При упавшем графике причину уже назвал баннер; прошлый снимок
+                той же монеты остаётся под пометкой */}
+            {orderBook.error && !chartError && (
+              <CardError>
+                Стакан не обновился: {errorText(orderBook.error)}.
+              </CardError>
+            )}
             <PriceChart
               data={chartData}
               coin={activeCoin}
@@ -205,6 +215,7 @@ export default function App() {
               historyLoading={history.loading}
               historyError={history.error}
               capped={history.capped}
+              orderBook={orderBook.data}
             />
           </TopRow>
 
@@ -354,6 +365,9 @@ const CardError = styled.div`
 
 // Кошелёк уехал из левой колонки в T6 — график занимает всю ширину
 const TopRow = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   margin-bottom: 16px;
 `;
 

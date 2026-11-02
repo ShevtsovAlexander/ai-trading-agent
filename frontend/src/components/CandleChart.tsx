@@ -23,6 +23,9 @@ import type {
 import type { Interval, MarketSeries } from "../types/market";
 import { formatCandleTime } from "../utils/candleTime";
 import { BandPrimitive } from "./bandPrimitive";
+import { WallsPrimitive } from "./wallsPrimitive";
+import type { WallSide } from "./wallsPrimitive";
+import type { OrderBookSnapshot, Wall } from "../types/orderbook";
 import { seriesKey, toChartData } from "./chartData";
 import type { ChartData } from "./chartData";
 
@@ -49,7 +52,16 @@ interface Props {
   complete: boolean; // левее свечей у Binance нет — дальше не листается
   // Время крайних видимых свечей, мс; null — данных нет
   onVisibleRange: (r: { from: number; to: number } | null) => void;
+  // Стакан текущей монеты (TASK-0009); null — полос нет
+  walls: OrderBookSnapshot | null;
+  // Полоса под курсором; null — курсор не на полосе
+  onWallHover: (h: { side: WallSide; wall: Wall } | null) => void;
+  // Сколько из нарисуемых ступеней вне видимых цен
+  onWallsOffscreen: (count: number) => void;
 }
+
+// Допуск наведения на тонкую полосу, px (план, «Риски»)
+const HOVER_SLOP = 2;
 
 const HEIGHT = 360;
 // Запас баров слева, при котором грузится следующий кусок
@@ -75,6 +87,7 @@ interface Series {
   bbUpper: ISeriesApi<"Line">;
   bbLower: ISeriesApi<"Line">;
   band: BandPrimitive;
+  walls: WallsPrimitive;
 }
 
 // Подписи оси — местное время ru-RU, как в таблице и тултипе: ось
@@ -101,6 +114,9 @@ export const CandleChart = ({
   onNeedMore,
   complete,
   onVisibleRange,
+  walls,
+  onWallHover,
+  onWallsOffscreen,
 }: Props) => {
   const theme = useTheme();
   const boxRef = useRef<HTMLDivElement>(null);
@@ -115,6 +131,10 @@ export const CandleChart = ({
   // цену последней ВИДИМОЙ свечи, и при зуме в историю жёлтым подписывалась
   // бы старая цена (критик T5)
   const lastPriceRef = useRef<IPriceLine | null>(null);
+  // Колбэки стакана — через ref: примитив создаётся один раз, а обработчик
+  // перекрестия подписан на [theme] (обновляются эффектом ниже)
+  const wallHoverRef = useRef(onWallHover);
+  const offscreenRef = useRef(onWallsOffscreen);
 
   // Создание — один раз. Очистка remove() обязательна: StrictMode в dev
   // монтирует эффект дважды, без неё в контейнере два графика
@@ -164,6 +184,17 @@ export const CandleChart = ({
       });
     const band = new BandPrimitive(theme.chart.bandFill);
     candles.attachPrimitive(band);
+    // Стены — поверх свечей у правого края (план TASK-0009, trade-off 7)
+    const wallsPrimitive = new WallsPrimitive(
+      {
+        bid: theme.chart.wallBid,
+        ask: theme.chart.wallAsk,
+        bidHover: theme.chart.wallBidHover,
+        askHover: theme.chart.wallAskHover,
+      },
+      (n) => offscreenRef.current(n),
+    );
+    candles.attachPrimitive(wallsPrimitive);
     seriesRef.current = {
       candles,
       bbUpper: chart.addSeries(LineSeries, bandLine),
@@ -171,6 +202,7 @@ export const CandleChart = ({
       ema9: chart.addSeries(LineSeries, { ...line, color: theme.chart.emaFast }),
       ema21: chart.addSeries(LineSeries, { ...line, color: theme.chart.emaSlow }),
       band,
+      walls: wallsPrimitive,
     };
     chartRef.current = chart;
 
@@ -213,7 +245,9 @@ export const CandleChart = ({
   useEffect(() => {
     needMoreRef.current = onNeedMore;
     visibleRef.current = onVisibleRange;
-  }, [onNeedMore, onVisibleRange]);
+    wallHoverRef.current = onWallHover;
+    offscreenRef.current = onWallsOffscreen;
+  }, [onNeedMore, onVisibleRange, onWallHover, onWallsOffscreen]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -360,6 +394,56 @@ export const CandleChart = ({
     chart.subscribeCrosshairMove(handler);
     return () => chart.unsubscribeCrosshairMove(handler);
   }, [data, onHover, theme]);
+
+  // Стены — свой эффект, не эффект свечей: опросы свечей и стакана друг
+  // друга не трогают (план TASK-0009, «Поток данных»). Без свечей полос нет:
+  // шкала цены спрятана, ступени не к чему привязать
+  const hasCandles = data != null && data.candles.length > 0;
+  // Наведённая ступень — ref, общий с обработчиком перекрестия
+  const hoverRef = useRef<{ side: WallSide; wall: Wall } | null>(null);
+  useEffect(() => {
+    const s = seriesRef.current;
+    const shown = walls && hasCandles ? walls : null;
+    s?.walls.setData(shown);
+    // Новый снимок под неподвижной мышью: та же ступень (сторона и from) —
+    // плашка остаётся с новыми числами, иначе гаснет (критик T7: пропадала
+    // каждые 20 с)
+    const h = hoverRef.current;
+    const same = h && shown ? (h.side === "bid" ? shown.bids : shown.asks).find((w) => w.from === h.wall.from) : undefined;
+    hoverRef.current = h && same ? { side: h.side, wall: same } : null;
+    s?.walls.setHovered(hoverRef.current?.wall ?? null);
+    wallHoverRef.current(hoverRef.current);
+  }, [walls, hasCandles, theme]);
+
+  // Перекрестие → полоса под курсором по раскладке последнего кадра: x не
+  // левее полосы, y в её высоте ± HOVER_SLOP; из нескольких — ближайшая по y
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const handler = (param: MouseEventParams<Time>) => {
+      const p = param.point;
+      const s = seriesRef.current;
+      let hit: { side: WallSide; wall: Wall } | null = null;
+      if (p && s) {
+        let best = Infinity;
+        for (const b of s.walls.layout()) {
+          if (p.x < b.x - HOVER_SLOP) continue;
+          if (p.y < b.top - HOVER_SLOP || p.y > b.bottom + HOVER_SLOP) continue;
+          const d = p.y < b.top ? b.top - p.y : p.y > b.bottom ? p.y - b.bottom : 0;
+          if (d < best) {
+            best = d;
+            hit = { side: b.side, wall: b.wall };
+          }
+        }
+      }
+      if ((hit?.wall ?? null) === (hoverRef.current?.wall ?? null)) return;
+      hoverRef.current = hit;
+      s?.walls.setHovered(hit?.wall ?? null);
+      wallHoverRef.current(hit);
+    };
+    chart.subscribeCrosshairMove(handler);
+    return () => chart.unsubscribeCrosshairMove(handler);
+  }, [theme]);
 
   return <Box ref={boxRef} />;
 };
