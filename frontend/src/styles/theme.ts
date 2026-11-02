@@ -38,6 +38,12 @@ export const theme = {
         // Открытые позиции (TASK-0008): сумма — светлой, цена — тонкой серой
         oi: palette.bodyStrong,
         oiPrice: palette.muted,
+        // Стакан (TASK-0009): полосы поверх последних свечей — полупрозрачные
+        // рост/падение (план, trade-off 7); наведённая — плотнее
+        wallBid: `${palette.up}80`,
+        wallAsk: `${palette.down}80`,
+        wallBidHover: `${palette.up}e6`,
+        wallAskHover: `${palette.down}e6`,
     },
     font: {
         sans: '"Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',

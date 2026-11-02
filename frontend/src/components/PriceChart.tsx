@@ -7,6 +7,8 @@ import { CandleChart } from "./CandleChart";
 import { Skeleton } from "./Skeleton";
 import { seriesKey } from "./chartData";
 import type { HoverPoint } from "./CandleChart";
+import type { OrderBookSnapshot, Wall } from "../types/orderbook";
+import type { WallSide } from "./wallsPrimitive";
 
 interface Coin {
   id: string;
@@ -30,6 +32,7 @@ interface Props {
   historyLoading: boolean; // кусок истории в пути
   historyError: string | null; // кусок не загрузился (502/429/нет связи)
   capped: boolean; // потолок баров — глубже не грузится
+  orderBook: OrderBookSnapshot | null; // стакан текущей монеты (TASK-0009)
 }
 
 const INTERVALS: Interval[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
@@ -196,6 +199,67 @@ const HistoryNote = styled.div`
   pointer-events: none;
 `;
 
+// Плашка наведённой полосы стакана — у правого верхнего угла, левее шкалы
+// цены (полосы — у правого края области свечей)
+const WallNote = styled(HistoryNote)`
+  left: auto;
+  right: 72px;
+  color: ${({ theme }) => theme.colors.body};
+`;
+
+// Строка стакана под графиком: источник, время снимка, охват, ступень
+const WallsInfo = styled.div`
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-family: ${({ theme }) => theme.font.mono};
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  color: ${({ theme }) => theme.colors.muted};
+`;
+
+const WallsWarning = styled.span`
+  color: ${({ theme }) => theme.colors.warning};
+`;
+
+// Оговорка — фиксированный текст, не AI (PRD, критерий 5)
+const WallsDisclaimer = styled.div`
+  margin-top: 4px;
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  color: ${({ theme }) => theme.colors.mutedSoft};
+`;
+
+const EXCHANGE_LABEL = { binance: "Binance", okx: "OKX" } as const;
+
+const ru = (v: number, min: number, max: number) =>
+  v.toLocaleString("ru-RU", { minimumFractionDigits: min, maximumFractionDigits: max });
+
+// Цена границы ступени: у шага меньше доллара — копейки всегда; граница по
+// mid бывает дробной и у шага $10 — до 2 знаков
+const fmtPrice = (v: number, step: number) => ru(v, step < 1 ? 2 : 0, 2);
+
+// Объём в монетах: крупный — целым, мелкий — с долями
+// Доля меньше 0,001 не показывается нулём — заявки есть (критик T7)
+const fmtCoin = (v: number) =>
+  v >= 100 ? ru(v, 0, 0) : v >= 1 ? ru(v, 0, 2) : v >= 0.001 ? ru(v, 0, 3) : "< 0,001";
+
+// Котировка — USDT, не доллары (PRD, «Риски»)
+const fmtUsdt = (v: number) =>
+  v >= 1e6 ? `${ru(v / 1e6, 1, 1)} млн USDT` : v >= 1e3 ? `${ru(v / 1e3, 0, 0)} тыс. USDT` : `${ru(v, 0, 0)} USDT`;
+
+const fmtPct = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${ru(Math.abs(v), 2, 2)} %`;
+
+// «78 000–78 010 · покупка 50 BTC · 3,9 млн USDT · Binance 20 · OKX 30»
+const wallText = (side: WallSide, w: Wall, step: number, label: string) =>
+  [
+    `${fmtPrice(w.from, step)}–${fmtPrice(w.to, step)}`,
+    `${side === "bid" ? "покупка" : "продажа"} ${fmtCoin(w.coin)} ${label}`,
+    fmtUsdt(w.usdt),
+    ...(["binance", "okx"] as const)
+      .filter((ex) => w.byExchange[ex] != null)
+      .map((ex) => `${EXCHANGE_LABEL[ex]} ${fmtCoin(w.byExchange[ex]!)}`),
+  ].join(" · ");
+
 // --- component ---
 
 export const PriceChart = ({
@@ -211,8 +275,14 @@ export const PriceChart = ({
   historyLoading,
   historyError,
   capped,
+  orderBook,
 }: Props) => {
   const theme = useTheme();
+  const [wallHover, setWallHover] = useState<{ side: WallSide; wall: Wall } | null>(null);
+  const [offscreen, setOffscreen] = useState(0);
+  // Без свечей полос нет — и строки стакана тоже
+  const book = data && data.candles.length > 0 ? orderBook : null;
+  const down = book?.exchanges.filter((e) => "error" in e).map((e) => EXCHANGE_LABEL[e.exchange]) ?? [];
   const [hover, setHover] = useState<HoverPoint | null>(null);
   // Видимый отрезок графика (мс): после прокрутки и зума он, а не кнопка
   // периода, решает, нужна ли дата в подписях
@@ -332,14 +402,56 @@ export const PriceChart = ({
           onNeedMore={onNeedMore}
           complete={complete}
           onVisibleRange={setVisible}
+          walls={book}
+          onWallHover={setWallHover}
+          onWallsOffscreen={setOffscreen}
         />
         {data && note && <HistoryNote>{note}</HistoryNote>}
+        {book && wallHover && (
+          <WallNote>{wallText(wallHover.side, wallHover.wall, book.step, coin.label)}</WallNote>
+        )}
         {loading && (
           <ChartSkeleton>
             <Skeleton $h="100%" />
           </ChartSkeleton>
         )}
       </ChartArea>
+
+      {book && (
+        <>
+          <WallsInfo>
+            {book.mid == null || book.coverage == null ? (
+              <WallsWarning>Стакан: ни одна биржа не ответила</WallsWarning>
+            ) : (
+              <>
+                <span>
+                  Стакан {down.length ? EXCHANGE_LABEL[book.exchanges.find((e) => !("error" in e))!.exchange] : "Binance + OKX"}, спот
+                </span>
+                <span>снимок {new Date(book.at).toLocaleTimeString("ru-RU")}</span>
+                <span>
+                  охват {fmtPct((book.coverage.bid / book.mid - 1) * 100)} /{" "}
+                  {fmtPct((book.coverage.ask / book.mid - 1) * 100)}
+                </span>
+                <span>ступень {fmtPrice(book.step, book.step)} USDT</span>
+                {offscreen > 0 && <span>ещё {offscreen} за краем графика</span>}
+                {down.length > 0 && (
+                  <WallsWarning>без {down.join(" и ")} — сумма неполная</WallsWarning>
+                )}
+              </>
+            )}
+          </WallsInfo>
+          {/* Без полос (обе биржи не ответили) про «20 ступеней» молчим
+              (критик T8) */}
+          {book.mid != null && (
+            <WallsDisclaimer>
+              Полосы — 20 крупнейших ступеней заявок прямо сейчас (10 на покупку ниже цены,
+              10 на продажу выше). Заявку могут снять в любой момент, часть объёма не видна
+              (скрытые заявки, другие биржи). Это снимок, не прогноз и не гарантия, что цена
+              на ней остановится.
+            </WallsDisclaimer>
+          )}
+        </>
+      )}
     </Container>
   );
 };
