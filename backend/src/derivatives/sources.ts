@@ -23,7 +23,7 @@ const MARK_PAGE = 1000; // 31 день часовых свечей — 744, од
 // именем биржи, а не NaN на экране (план TASK-0007, «Риски»). OKX и Bybit
 // сообщают об ошибке в теле при HTTP 200 (фикстура errors) — код проверяется.
 
-const num = (source: string, field: string, value: unknown): number => {
+export const num = (source: string, field: string, value: unknown): number => {
   const n = typeof value === 'string' ? Number(value) : NaN;
   // Number('  ') === 0 — пустую и пробельную строку отсекаем явно (критик T2)
   if (typeof value !== 'string' || value.trim() === '' || !Number.isFinite(n)) {
@@ -34,7 +34,7 @@ const num = (source: string, field: string, value: unknown): number => {
 
 // Объём и цена не бывают отрицательными: иначе минус молча ушёл бы в сумму
 // OI (критик T2). Цена — строго > 0, объём — ≥ 0.
-const atLeast = (
+export const atLeast = (
   source: string,
   field: string,
   n: number,
