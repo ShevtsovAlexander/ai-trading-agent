@@ -8,6 +8,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { BacktestModule } from './backtest/backtest.module';
 import { NewsModule } from './news/news.module';
 import { DerivativesModule } from './derivatives/derivatives.module';
+import { OrderbookModule } from './orderbook/orderbook.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { DerivativesModule } from './derivatives/derivatives.module';
     BacktestModule,
     NewsModule,
     DerivativesModule,
+    OrderbookModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,3 +1,5 @@
+import type { Wall } from './walls';
+
 // Символы спота по coinId — те же ключи, что COINS (market/market.types.ts).
 // Binance — символ спота как у свечей; OKX — инструмент спота, не SWAP
 // (research TASK-0009, «Не найдено»: в коде были только фьючерсные).
@@ -38,4 +40,33 @@ export interface Book {
   asks: Level[];
   full: { bid: boolean; ask: boolean };
   at: number;
+}
+
+// Снимок стакана живёт 15 с: опрос фронта — 20 с, несколько вкладок не
+// множат запросы (план TASK-0009, trade-off 4). Кэшируется и ответ с
+// ошибкой — повтор к упавшей бирже не чаще раза в 15 с
+export const SNAPSHOT_TTL_MS = 15_000;
+
+// Ожидание ответа биржи: зависшая биржа — отказ в её поле, а не висящий
+// маршрут (решение человека по критику T3; как news.service.ts:23). 10 с —
+// меньше опроса 20 с: запросы не копятся
+export const BOOK_TIMEOUT_MS = 10_000;
+
+export type ExchangeState =
+  | { exchange: BookExchange; at: number }
+  | { exchange: BookExchange; error: string };
+
+// Ответ GET /orderbook/:coinId (план TASK-0009, «Контракты»). Обе биржи
+// упали — mid и coverage null, стороны пусты, ошибки в exchanges (решение
+// человека к T3; 200, не 502 — как деривативы)
+export interface OrderBookSnapshot {
+  coinId: string;
+  market: string; // 'BTC/USDT'
+  at: number; // мс, часы бэкенда после ответа обеих бирж
+  mid: number | null; // середина Binance, Binance упал — OKX
+  step: number; // шаг ступени, USDT
+  coverage: { bid: number; ask: number } | null; // общий край охвата, цены
+  exchanges: ExchangeState[]; // всегда binance, okx — в этом порядке
+  bids: Wall[]; // ≤ WALLS_PER_SIDE, по убыванию usdt
+  asks: Wall[];
 }
