@@ -20,6 +20,11 @@ import { OpenInterestChart } from "./components/OpenInterestChart";
 import { useDerivatives } from "./hooks/useDerivatives";
 import { useOpenInterestHistory } from "./hooks/useOpenInterestHistory";
 import { useOrderBook } from "./hooks/useOrderBook";
+import { useCoinFields } from "./hooks/useCoinFields";
+import {
+  CoinFieldsPanel,
+  CoinFieldsPanelSkeleton,
+} from "./components/CoinFieldsPanel";
 import type { OiStep } from "./types/derivatives";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
 import { useChartHistory } from "./hooks/useChartHistory";
@@ -149,6 +154,8 @@ export default function App() {
   const oiHistory = useOpenInterestHistory(activeCoin.id, oiStep);
   // Стакан — своя загрузка, опрос 20 с (TASK-0009, план «Поток данных»)
   const orderBook = useOrderBook(activeCoin.id);
+  // Поля монеты — своя загрузка, опрос 60 с (TASK-0010)
+  const coinFields = useCoinFields(activeCoin.id);
 
   return (
     <Wrapper>
@@ -258,6 +265,16 @@ export default function App() {
               )}
               {viewShown && <MarketStateCard data={viewShown} />}
               {viewLoading && <MarketStateCardSkeleton />}
+              {/* Поля монеты — под карточкой рынка (план TASK-0010,
+                  trade-off 5). Ошибка — пометкой, прошлые данные той же
+                  монеты остаются под ней */}
+              {coinFields.error && (
+                <CardError>
+                  Поля монеты не обновились: {errorText(coinFields.error)}.
+                </CardError>
+              )}
+              {coinFields.data && <CoinFieldsPanel data={coinFields.data} />}
+              {coinFields.loading && <CoinFieldsPanelSkeleton />}
             </Left>
             <IndicatorHistoryTable
               coinId={activeCoin.id}
