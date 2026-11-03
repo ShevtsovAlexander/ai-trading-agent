@@ -335,8 +335,8 @@ export class BacktestService {
     return result;
   }
 
-  // Тренд по последним points свечам — то же правило, что calcTrend в
-  // indicators/indicators.ts (перенос удалённого PriceService.getTrend).
+  // Тренд по последним points свечам — перенос удалённого PriceService.getTrend
+  // (копия в indicators.ts снята в TASK-0011: дашборд показывает режим по ADX).
   private calcTrend(
     closes: number[],
     i: number,

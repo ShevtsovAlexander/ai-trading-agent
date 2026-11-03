@@ -21,6 +21,11 @@ import { useDerivatives } from "./hooks/useDerivatives";
 import { useOpenInterestHistory } from "./hooks/useOpenInterestHistory";
 import { useOrderBook } from "./hooks/useOrderBook";
 import { useCoinFields } from "./hooks/useCoinFields";
+import { useMarketRegime } from "./hooks/useMarketRegime";
+import {
+  MarketRegimePanel,
+  MarketRegimePanelSkeleton,
+} from "./components/MarketRegimePanel";
 import {
   CoinFieldsPanel,
   CoinFieldsPanelSkeleton,
@@ -156,6 +161,8 @@ export default function App() {
   const orderBook = useOrderBook(activeCoin.id);
   // Поля монеты — своя загрузка, опрос 60 с (TASK-0010)
   const coinFields = useCoinFields(activeCoin.id);
+  // Режим рынка — по монете, без интервала, опрос 5 мин (TASK-0011)
+  const regime = useMarketRegime(activeCoin.id);
 
   return (
     <Wrapper>
@@ -265,6 +272,16 @@ export default function App() {
               )}
               {viewShown && <MarketStateCard data={viewShown} />}
               {viewLoading && <MarketStateCardSkeleton />}
+              {/* Режим рынка — под карточкой рынка, на месте снятого
+                  «Тренда» (план TASK-0011, trade-off 4). Ошибка — пометкой,
+                  прошлые данные той же монеты остаются под ней */}
+              {regime.error && (
+                <CardError>
+                  Режим рынка не обновился: {errorText(regime.error)}.
+                </CardError>
+              )}
+              {regime.data && <MarketRegimePanel data={regime.data} />}
+              {regime.loading && <MarketRegimePanelSkeleton />}
               {/* Поля монеты — под карточкой рынка (план TASK-0010,
                   trade-off 5). Ошибка — пометкой, прошлые данные той же
                   монеты остаются под ней */}

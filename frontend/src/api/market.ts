@@ -1,5 +1,12 @@
 import { api } from './client';
-import type { HistoryChunk, Interval, MarketSeries, MarketView, Range } from "../types/market.ts";
+import type {
+    HistoryChunk,
+    Interval,
+    MarketRegime,
+    MarketSeries,
+    MarketView,
+    Range,
+} from "../types/market.ts";
 
 // Свечи диапазона + ряды индикаторов. Недопустимая комбинация — 400,
 // Binance недоступен — 502.
@@ -32,5 +39,12 @@ export const getView = async (coinId: string, interval: Interval): Promise<Marke
     const response = await api.get<MarketView>(`/market/view/${coinId}`, {
         params: { interval },
     });
+    return response.data;
+};
+
+// Режим рынка по дневным свечам (TASK-0011). Неизвестная монета — 400;
+// Binance или «ADX не определён» — 502 с текстом
+export const getRegime = async (coinId: string): Promise<MarketRegime> => {
+    const response = await api.get<MarketRegime>(`/market/regime/${coinId}`);
     return response.data;
 };

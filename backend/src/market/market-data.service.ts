@@ -9,12 +9,12 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { fetchClosedCandles } from '../binance/klines';
 import {
+  calcADX,
   calcBB,
   calcEMA,
   calcMACD,
   calcRSI,
   calcSMA,
-  calcTrend,
 } from '../indicators/indicators';
 import {
   COINS,
@@ -26,6 +26,7 @@ import {
   MAX_CANDLES,
   MIN_CANDLES,
   MarketSeries,
+  MarketRegime,
   MarketView,
   RANGE_MS,
   Range,
@@ -33,8 +34,9 @@ import {
   WARMUP,
   isAllowed,
 } from './market.types';
+import { ADX_PERIOD, REGIME_THRESHOLD, classifyRegime } from './regime';
 
-const VIEW_CANDLES = 10; // окно тренда (как getTrend); recent — последние 5
+const VIEW_CANDLES = 10; // окно карточки (было окном тренда до TASK-0011); recent — последние 5
 const RECENT = 5;
 const CACHE_SIZE = 50;
 // Свеча считается закрытой через 5 с после closeTime: закрытость решают
@@ -56,10 +58,14 @@ const round = (value: number | undefined): number | null =>
     ? null
     : parseFloat(value.toFixed(2));
 
+// ADX режима — отбрасыванием до 2 знаков, не округлением: ярлык считан по
+// точному ADX, и 24,996 не должен показаться «25,00 · боковик» (критик T4)
+const floor2 = (value: number): number => Math.floor(value * 100) / 100;
+
 interface Computed {
   candles: Candle[]; // только свечи окна, разогрев отрезан
   series: SeriesPoint[];
-  closes: number[]; // close с разогревом — вход для MA5 и тренда
+  closes: number[]; // close с разогревом — вход для MA5
 }
 
 // Свечи Binance → ряды индикаторов. В БД ничего не пишет: история — у
@@ -73,6 +79,8 @@ export class MarketDataService {
   private weightMissingWarned = false;
   // Кусок истории неизменен (все свечи закрыты) — ключ без «сейчас»
   private readonly historyCache = new Map<string, HistoryChunk>();
+  // Режим — до закрытия следующего дня: ключ монета|openTime последнего дня
+  private readonly regimeCache = new Map<string, MarketRegime>();
 
   // Часы — поле, чтобы тест мог сдвинуть время на интервал
   clock: () => number = Date.now;
@@ -130,11 +138,79 @@ export class MarketDataService {
       price: last.close,
       previousPrice: candles[candles.length - 2].close,
       ma5: round(sma5[sma5.length - 1]),
-      trend: calcTrend(closes.slice(-VIEW_CANDLES)),
       latest: series[series.length - 1],
       recent: series.slice(-RECENT),
       aiComment: null,
     };
+  }
+
+  // Режим рынка по всей дневной истории от листинга (TASK-0011): ADX(14),
+  // черта 25. Вся история — чтобы дата начала режима не упиралась в окно;
+  // ≈ 3–4 страницы Binance раз в сутки на монету. Ограничитель не режет —
+  // как карточку. NaN в ADX/DI любого дня после разогрева — 502, а не
+  // молчаливый ярлык: NaN бывает только от начала ряда (TR = 0 или нет
+  // направленного движения, +DM = −DM = 0) и залипает до конца (критик T2).
+  async getRegime(coinId: string): Promise<MarketRegime> {
+    const coin = this.coin(coinId);
+    const step = INTERVAL_MS['1d'];
+    const lastOpen = this.lastOpen(step);
+    const key = `${coinId}|${lastOpen}`;
+    const cached = this.regimeCache.get(key);
+    if (cached) return cached;
+
+    const all = await this.fetch(coinId, '1d', 0, lastOpen);
+    const first = 2 * ADX_PERIOD - 1;
+    if (all.length <= first) {
+      throw new BadGatewayException('Binance не отдал свечей');
+    }
+    const { adx, pdi, mdi } = calcADX(
+      all.map((c) => c.high),
+      all.map((c) => c.low),
+      all.map((c) => c.close),
+      ADX_PERIOD,
+    );
+    const points = all.slice(first).map((c, j) => ({
+      t: c.t,
+      adx: adx[first + j],
+      pdi: pdi[first + j],
+      mdi: mdi[first + j],
+    }));
+    if (
+      points.some(
+        (p) =>
+          !Number.isFinite(p.adx) ||
+          !Number.isFinite(p.pdi) ||
+          !Number.isFinite(p.mdi),
+      )
+    ) {
+      throw new BadGatewayException(
+        'ADX не определён: в начале истории нет направленного движения',
+      );
+    }
+
+    const { labels, since } = classifyRegime(points, REGIME_THRESHOLD);
+    const last = points[points.length - 1];
+    const result: MarketRegime = {
+      coinId,
+      market: coin.market,
+      regime: labels[labels.length - 1],
+      adx: floor2(last.adx),
+      pdi: round(last.pdi) as number,
+      mdi: round(last.mdi) as number,
+      threshold: REGIME_THRESHOLD,
+      since: points[since].t,
+      days: points.length - since,
+      closedAt: last.t + step - 1,
+    };
+
+    // Binance ещё не отдал только что закрытый день — не кэшируем
+    if (last.t === lastOpen) {
+      if (this.regimeCache.size >= CACHE_SIZE) {
+        this.regimeCache.delete(this.regimeCache.keys().next().value as string);
+      }
+      this.regimeCache.set(key, result);
+    }
+    return result;
   }
 
   private coin(coinId: string) {
