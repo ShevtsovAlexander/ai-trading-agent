@@ -9,5 +9,7 @@ import { AiModule } from '../ai/ai.module';
   imports: [HttpModule, AiModule],
   providers: [MarketDataService, MarketComment],
   controllers: [MarketController],
+  // Режим рынка — и для свода «Инфополе» (TASK-0012)
+  exports: [MarketDataService],
 })
 export class MarketModule {}
