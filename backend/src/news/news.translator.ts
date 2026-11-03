@@ -82,6 +82,9 @@ ${numbered}`;
       system: NewsTranslator.SYSTEM,
       maxTokens,
       temperature: 0.2,
+      // Батч до 50 заголовков и до 3200 токенов — дольше общего таймаута 20 с
+      // (критик TASK-0013 T3; живьём не замерено — Groq 403 у агента)
+      timeoutMs: 60_000,
     });
 
     return this.parseNumbered(raw, items.length);

@@ -3,6 +3,13 @@ import { createHash } from 'crypto';
 import { AiService } from '../ai/ai.service';
 import { Interval, MarketView } from './market.types';
 
+// Сколько /market/view ждёт комментарий (TASK-0013): цена и индикаторы не
+// должны стоять за моделью. Не успела — null (фронт: «комментарий не готов»),
+// а не комментарий прошлой свечи: подписи свечи у него нет, числа разошлись
+// бы с карточкой (критик T3). Генерация доходит в фоне и пишет кэш —
+// следующий опрос получит её.
+export const VIEW_COMMENT_WAIT_MS = 3000;
+
 const INTERVAL_LABEL: Record<Interval, string> = {
   '1m': '1 минута',
   '5m': '5 минут',
@@ -21,6 +28,12 @@ export class MarketComment {
   // Хеш считается от тех же полей, что уходят в промпт — иначе кэш
   // промахивался бы на изменениях, которых модель всё равно не видит.
   private readonly cache = new Map<string, { hash: string; comment: string }>();
+  // Генерация в полёте по `ключ|хеш фактов`: опрос, пока модель думает, не
+  // запускает второй вызов на те же факты
+  private readonly inflight = new Map<
+    string,
+    { job: Promise<string | null>; started: number }
+  >();
 
   private static readonly SYSTEM =
     'Ты крипто-аналитик. Описываешь обстановку на рынке по показаниям ' +
@@ -54,12 +67,59 @@ export class MarketComment {
   // Комментарий к последней закрытой свече интервала: в промпте интервал и
   // 5 последних значений, чтобы динамика бралась из данных, а не из догадок.
   describeView(view: MarketView): Promise<string | null> {
-    return this.generate(
-      `${view.coinId}|${view.interval}`,
+    const key = `${view.coinId}|${view.interval}`;
+    let flightKey: string;
+    try {
+      flightKey = `${key}|${this.hashView(view)}`;
+    } catch {
+      flightKey = key; // сбой хеша разберёт generate под try
+    }
+    // Генерация над этими фактами уже идёт — ждём остаток ТОГО ЖЕ окна (две
+    // вкладки, двойной вызов StrictMode получат ответ быстрой модели), а
+    // после окна — null сразу: повисшая модель не держит каждый опрос по 3 с
+    // (критик T5)
+    const running = this.inflight.get(flightKey);
+    if (running) {
+      const left = running.started + VIEW_COMMENT_WAIT_MS - Date.now();
+      return left > 0
+        ? this.withinWait(running.job, key, left)
+        : Promise.resolve(null);
+    }
+    const job = this.generate(
+      key,
       () => this.hashView(view),
       () => this.buildViewPrompt(view),
       MarketComment.SYSTEM_VIEW,
-    );
+    ).finally(() => this.inflight.delete(flightKey));
+    this.inflight.set(flightKey, { job, started: Date.now() });
+    return this.withinWait(job, key, VIEW_COMMENT_WAIT_MS);
+  }
+
+  // Ждём генерацию не дольше VIEW_COMMENT_WAIT_MS; таймер снимается, когда
+  // генерация успела (иначе висел бы в процессе)
+  private withinWait(
+    job: Promise<string | null>,
+    key: string,
+    waitMs: number,
+  ): Promise<string | null> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.logger.warn(
+          `Комментарий ${key}: модель не ответила за ${VIEW_COMMENT_WAIT_MS} мс — null, генерация в фоне`,
+        );
+        resolve(null);
+      }, waitMs);
+      job.then(
+        (comment) => {
+          clearTimeout(timer);
+          resolve(comment);
+        },
+        () => {
+          clearTimeout(timer);
+          resolve(null); // generate не бросает; на случай правки — не unhandled
+        },
+      );
+    });
   }
 
   // Весь метод под try: отказ AI-слоя не должен ронять маршрут данных.
