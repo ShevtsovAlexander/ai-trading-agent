@@ -76,11 +76,12 @@ export class NewsService implements OnModuleInit {
       const translated = await this.translator.translate(items);
       this.cache = translated;
       this.logger.log(`Обновлено новостей: ${items.length}`);
-
-      // Дайджест по уже переведённой ленте: кэш по хешу id сам решит,
-      // звать ли Groq (лента та же → 0 токенов).
-      await this.digest.generate(translated);
     }
+
+    // Свод — и при пустой ленте: факты рынка есть и без новостей (TASK-0012).
+    // Фиды легли — свод только по рынку, а не по старой ленте со свежим
+    // временем (критик T1–T3). Кэш по хешу ленты и фактов решит, звать ли Groq.
+    await this.digest.generate(items.length > 0 ? this.cache : []);
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') {
