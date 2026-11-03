@@ -4,7 +4,8 @@
 NestJS backend информационного дашборда по крипторынку.
 Берёт закрытые свечи Binance по запросу, считает по ним технические
 индикаторы и даёт к последней свече AI-комментарий; отдаёт деривативы и
-крупнейшие заявки стакана спота Binance + OKX; агрегирует новости и
+крупнейшие заявки стакана спота Binance + OKX и поля монеты с CoinGecko
+(капитализация, FDV, предложение); агрегирует новости и
 AI-дайджест ленты. Своей истории цен не копит — история у Binance
 (TASK-0004, `../docs/DECISIONS.md` 2026-10-20).
 
@@ -27,6 +28,9 @@ AI-дайджест ленты. Своей истории цен не копит
   история ставок, OI), OKX и Bybit (OI); все без ключа
 - Стакан (TASK-0009) — спот Binance `/api/v3/depth` и OKX
   `/api/v5/market/books-full`, по 5000 уровней, без ключа
+- Поля монеты (TASK-0010) — CoinGecko `GET /api/v3/coins/markets`, один
+  запрос на три монеты, без ключа. Свечей и цены с CoinGecko нет — только
+  капитализация, FDV и предложение
 - technicalindicators — только в тестах, эталон формул индикаторов
 
 ## Структура проекта
@@ -43,6 +47,14 @@ src/
 ├── binance/
 │   ├── klines.ts                 — fetchClosedCandles: закрытые свечи постранично по 1000, незакрытая отброшена; вес из заголовка x-mbx-used-weight-1m
 │   └── klines.spec.ts            — 5 тестов на честном фейке HTTP
+├── coin/                         — TASK-0010 «Поля монеты»
+│   ├── coin.types.ts             — CoinFields, COIN_TTL_MS 60 с, COIN_TIMEOUT_MS 10 с (зеркало — frontend/src/types/coin.ts)
+│   ├── sources.ts                — fetchMarkets / parseMarkets: coins/markets CoinGecko, строгий разбор number|null
+│   ├── coin.service.ts           — общий снимок трёх монет 60 с (и ошибка), запрос в полёте один, 400/502
+│   ├── coin.controller.ts        — GET /coin/:coinId
+│   ├── coin.module.ts            — HttpModule с таймаутом 10 с
+│   ├── fixtures/                 — markets-2026-11-02.json (реальный ответ CoinGecko)
+│   └── *.spec.ts                 — sources 22, service 11
 ├── derivatives/                  — TASK-0007, история OI — TASK-0008
 │   ├── sources.ts                — запросы к fapi/OKX/Bybit: ставка+markPrice, история ставок постранично, OI трёх бирж в USD; история OI трёх бирж и mark Bybit постранично; строгий разбор
 │   ├── oi-history.ts             — buildOiSeries: ряд OI на сетке моментов (сдвиг меток OKX, окно 30 дн., дыры, Bybit × mark, цена спота)
@@ -99,6 +111,7 @@ src/
 - GET  /derivatives/:coinId               — ставка Binance + мера, OI Binance/OKX/Bybit (TASK-0007)
 - GET  /derivatives/:coinId/open-interest?step=1d|1h — ряд OI трёх бирж за 30 дней и цена спота (TASK-0008)
 - GET  /orderbook/:coinId                 — стены стакана спота Binance + OKX: 10 крупнейших ступеней с каждой стороны (TASK-0009)
+- GET  /coin/:coinId                      — капитализация, FDV, предложение с CoinGecko (TASK-0010)
 - GET  /news                              — крипто-новости из RSS (Cointelegraph, Coindesk, Decrypt)
 - GET  /news/digest                       — AI-дайджест ленты (кэш по хешу id, генерится при обновлении ленты)
 - POST /backtest/run                      — прогон стратегии на исторических свечах
@@ -301,6 +314,33 @@ error }` в `exchanges`, не 502 (`Promise.allSettled`); обе упали — 
   же момент — 83–97 % ступеней × бирж точно, остальное — сдвиг момента
   между запросами (`../docs/aidd/tasklist/TASK-0009.md`).
 
+## Поля монеты (TASK-0010)
+`GET /coin/:coinId` → `CoinFields { coinId, market, marketCapUsd, fdvUsd,
+circulating, total, max, updatedAt }`. `400` — неизвестная монета (по
+`COINS`). Источник один, поэтому его отказ — `502` на весь ответ с текстом:
+«CoinGecko недоступен» (сеть, таймаут, порча ответа), «CoinGecko: превышен
+лимит запросов» (HTTP 429), «CoinGecko не отдал монету» (её нет в массиве).
+- **Источник** (`sources.ts`): `coins/markets?vs_currency=usd&ids=bitcoin,
+  ethereum,solana` — id CoinGecko совпадают с `coinId`. Числа у CoinGecko —
+  JSON `number`, не строки, поэтому `num()` деривативов не подходит, разбор
+  свой. Обязательные (`market_cap`, `circulating_supply`) — конечное > 0;
+  `fully_diluted_valuation`, `total_supply`, `max_supply` — `null` или
+  конечное > 0. Поля нет совсем (`undefined`) — ошибка, а не `null`.
+  `last_updated` — ISO → мс.
+- **`max: null` — лимита выпуска нет** (ETH, SOL на 2026-11-02).
+- **FDV у CoinGecko = цена × `total_supply`, не × `max_supply`** (сверка
+  research TASK-0010): у BTC FDV = капитализации при лимите 21 M. Отдаётся
+  как у источника, формулу называет оговорка фронта.
+- **Кэш — один снимок на все три монеты, 60 с, и с ошибкой**: при любом
+  числе вкладок к CoinGecko уходит не больше 1 запроса в минуту (лимит без
+  ключа не закреплён). У CoinGecko свой кэш `s-maxage=60`, чаще данные не
+  меняются. Пока кэш пуст, параллельные вызовы ждут один промис
+  (`inflight`, сброс в `finally`). Время снимка — после ответа. Ответ без
+  одной монеты — успешный снимок: 60 с она получает 502, остальные — данные.
+- **Таймаут** — 10 с (`HttpModule.register`), как у стакана.
+- Сверка (T3): бэкенд = CoinGecko на одном снимке (`last_updated`), 15/15
+  чисел; 3 мин опроса (261 запрос) — по 1 запросу к CoinGecko в минуту.
+
 ## AI-комментарий (market.comment.ts)
 - `describeView(view)` описывает обстановку на последней закрытой свече
   интервала. Промпт запрещает рекомендации и действия («купить», «продать»,
@@ -396,7 +436,7 @@ npm run start:dev
 
 ## Тесты
 npm run test
-252 теста, только с внешним оракулом:
+285 тестов, только с внешним оракулом:
 - `indicators/indicators.spec.ts` — 11: EMA(9/21/26), RSI(14) на ряде и трёх
   краевых, MACD, BB(20), ширина BB, SMA(5) против technicalindicators.
 - `binance/klines.spec.ts` — 5: пагинация 2300 свечей за 3 запроса,
@@ -452,9 +492,19 @@ npm run test
   `code 51001`) и обеих, кэш 15 с (граница ±1 мс, и с ошибкой), кэш по
   монете, `at` после ответа обеих, 400, таймаут клиента 10 с.
 
+- `coin/sources.spec.ts` — 22: разбор реального ответа CoinGecko
+  (фикстура `markets-2026-11-02.json`) — 3 монеты × все поля, `null` у
+  `max`; порча полей (строка, `null` у обязательного, 0, минус, NaN,
+  Infinity, `undefined`) и даты — ошибка с именем поля; пустой массив —
+  пустой словарь; запрос с `ids`.
+- `coin/coin.service.spec.ts` — 11: ответ = разбору + `market`, один
+  запрос на три монеты, 400 без запроса, кэш 60 с (граница ±1 мс), ошибка
+  в кэше, 429, пропавшая монета, параллельные вызовы — один запрос, TTL от
+  ответа, таймаут 10 с.
+
 Каждый новый тест прогнан против мутанта кода (красный) — итоги в
-`../docs/aidd/tasklist/TASK-0004.md`, `TASK-0007.md`, `TASK-0008.md` и
-`TASK-0009.md`.
+`../docs/aidd/tasklist/TASK-0004.md`, `TASK-0007.md`, `TASK-0008.md`,
+`TASK-0009.md` и `TASK-0010.md`.
 
 `npm run test:e2e` сломан до миграции (ждёт `GET /` → «Hello World!»).
 

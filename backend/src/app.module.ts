@@ -9,6 +9,7 @@ import { BacktestModule } from './backtest/backtest.module';
 import { NewsModule } from './news/news.module';
 import { DerivativesModule } from './derivatives/derivatives.module';
 import { OrderbookModule } from './orderbook/orderbook.module';
+import { CoinModule } from './coin/coin.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { OrderbookModule } from './orderbook/orderbook.module';
     NewsModule,
     DerivativesModule,
     OrderbookModule,
+    CoinModule,
   ],
   controllers: [AppController],
   providers: [AppService],
