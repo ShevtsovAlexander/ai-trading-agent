@@ -4,7 +4,7 @@
 React фронтенд информационного дашборда по крипторынку.
 Показывает свечи Binance с индикаторами, AI-комментарий к последней
 закрытой свече, деривативы (ставка финансирования, открытые позиции) и
-ленту новостей, поля монеты с CoinGecko (капитализация, FDV, предложение), на графике — крупнейшие заявки стакана спота Binance + OKX.
+ленту новостей, поля монеты с CoinGecko (капитализация, FDV, предложение), режим рынка по дневным свечам (ADX: тренд вверх / вниз / боковик), на графике — крупнейшие заявки стакана спота Binance + OKX.
 **Не торговый терминал:** вердиктов
 BUY/SELL/SKIP, уверенности, риска, позиций и кошелька на экране нет — сняты
 в TASK-0001. Рамка: «триггеры, не команды». Границы — `../docs/VISION.md`.
@@ -26,10 +26,11 @@ src/
 │   ├── derivatives.ts            — getDerivatives (/derivatives/:coinId), getOpenInterestHistory (/derivatives/:coinId/open-interest?step=)
 │   ├── coin.ts                   — getCoinFields (/coin/:coinId), TASK-0010
 │   ├── orderbook.ts              — getOrderBook (/orderbook/:coinId), TASK-0009
-│   ├── market.ts                 — getCandles (/market/candles), getHistory (/market/candles/:coin/history), getView (/market/view)
+│   ├── market.ts                 — getCandles (/market/candles), getHistory (/market/candles/:coin/history), getView (/market/view), getRegime (/market/regime), TASK-0011
 │   └── news.ts                   — getNews, getDigest + типы NewsItem/Digest
 ├── components/
-│   ├── MarketStateCard.tsx       — карточка последней закрытой свечи: цена/MA5/тренд, EMA/RSI/MACD/BB, подпись свечи, секция «AI»
+│   ├── MarketStateCard.tsx       — карточка последней закрытой свечи: цена/MA5, EMA/RSI/MACD/BB, подпись свечи, секция «AI» («Тренд» снят в TASK-0011)
+│   ├── MarketRegimePanel.tsx     — блок «Режим рынка» под карточкой рынка: ярлык, с какого дня, ADX и черта, DI, день закрыт (UTC), оговорка; скелетон
 │   ├── CoinFieldsPanel.tsx       — карточка «Монета» под карточкой рынка: капитализация, FDV, предложение, доля от максимума или «лимита нет», оговорка; скелетон
 │   ├── DerivativesPanel.tsx      — панель «Деривативы» под графиком: ставка и перевес от нормы, «как часто», OI трёх бирж, оговорка; скелетон
 │   ├── OpenInterestChart.tsx     — карточка «Открытые позиции · 30 дней»: вкладки шага, lightweight-charts (сумма OI справа, цена слева), легенда по перекрестию, «без X», оговорка
@@ -49,11 +50,12 @@ src/
 │   ├── derivatives.ts            — Derivatives, FundingView, Stress, FundingState, OiStep, OiPoint, OpenInterestHistory (зеркало backend/src/derivatives/derivatives.types.ts)
 │   ├── coin.ts                   — CoinFields (зеркало backend/src/coin/coin.types.ts)
 │   ├── orderbook.ts              — Wall, ExchangeState, OrderBookSnapshot (зеркало backend/src/orderbook/orderbook.types.ts и walls.ts)
-│   └── market.ts                 — Interval/Range, границы, isAllowed, nearestAllowed, Candle, SeriesPoint, MarketSeries, MarketView, HistoryChunk/HISTORY_CHUNK
+│   └── market.ts                 — Interval/Range, границы, isAllowed, nearestAllowed, Candle, SeriesPoint, MarketSeries, MarketView, HistoryChunk/HISTORY_CHUNK, Regime, MarketRegime, REGIME_LABELS
 ├── hooks/
 │   ├── useDerivatives.ts         — деривативы монеты: опрос 60 с, токен запроса, данные и ошибка только текущей монеты, скелетон 300 мс
 │   ├── useOpenInterestHistory.ts — история OI выбранного шага: опрос 5 мин, токен, данные и ошибка только текущих монеты и шага, скелетон 300 мс
 │   ├── useCoinFields.ts          — поля монеты: опрос 60 с, токен, данные и ошибка только текущей монеты, скелетон 300 мс
+│   ├── useMarketRegime.ts        — режим рынка: опрос 5 мин, без интервала, токен, данные и ошибка только текущей монеты, скелетон 300 мс
 │   ├── useOrderBook.ts           — стакан монеты: опрос 20 с, токен, данные и ошибка только текущей монеты, без скелетона
 │   ├── useDelayedFlag.ts         — флаг, который включается, если условие держится дольше N мс
 │   └── useChartHistory.ts        — куски истории левее основного окна: загрузка, ошибка и пауза повтора, начало истории, потолок MAX_BARS
@@ -74,7 +76,8 @@ src/
 - `MarketSeries` — ответ `/candles` (`candles` + `series`, `series[i].t ===
   candles[i].t`); `MarketView` — ответ `/view` (`latest`, `recent`, `closedAt`,
   `aiComment`); `HistoryChunk` — ответ `/candles/:coin/history` (свечи левее
-  `before`, `complete` — начало истории у Binance)
+  `before`, `complete` — начало истории у Binance); `MarketRegime` — ответ
+  `/regime` (без интервала)
 
 ## Ключевые решения
 - Источник — закрытые свечи Binance через бэкенд, своей истории нет
@@ -309,6 +312,31 @@ src/
   доля, место, смена монеты и поздний ответ, 502/500, опрос 60 с
   (`../docs/aidd/tasklist/TASK-0010.md`, T5).
 
+## Режим рынка (TASK-0011)
+Блок `MarketRegimePanel` в левой колонке `BottomRow`, между карточкой рынка
+и «Монетой» — на месте снятого поля «Тренд» по 10 свечам (план, trade-off 4:
+в ячейку не помещаются число, порог, дата и оговорка).
+- **Данные** — `useMarketRegime(coin)`, приёмы `useCoinFields`: токен,
+  данные и ошибка только текущей монеты, скелетон через 300 мс, опрос раз в
+  5 мин (`REGIME_POLL_MS`; режим меняется раз в сутки, бэкенд держит его до
+  закрытия дня). **Интервала нет**: смена свечи не шлёт запрос и не
+  показывает скелетон. Ошибка — «Режим рынка не обновился: …» над блоком
+  (`warning`), прошлые данные той же монеты остаются.
+- **Показ** — «↑ Тренд вверх» / «↓ Тренд вниз» / «→ Боковик» (монохром,
+  `REGIME_LABELS`); «с ДД.ММ.ГГГГ · N дн.»; «Сила движения ADX 22,02 · тренд
+  — от 25»; «+DI 14,14 · −DI 28,96»; «день закрыт ДД.ММ (UTC)»; подпись
+  «BTC · Binance · дневные свечи». **Даты — в UTC**: дневные свечи Binance
+  режутся по 00:00 UTC, по местному времени к западу от Гринвича день
+  начала съехал бы на предыдущий.
+- **Оговорка** — фиксированный текст по замеру (`../docs/RESEARCH.md`
+  «Режим рынка»): описывает прошедшие дни и запаздывает — смену видно,
+  когда движение уже идёт, резкий обвал — после факта, рост рывками может не
+  попасть в тренд вовсе; ярлык может смениться через 1–2 дня; не прогноз и
+  не указание к сделке.
+- Приёмка — headless Chrome + CDP, 17 проверок: блок = ответу бэкенда по
+  трём монетам, интервалы без запроса и скелетона, место, поздний ответ
+  прошлой монеты, 502, часовой пояс UTC−8 (`../docs/aidd/tasklist/TASK-0011.md`, T8).
+
 ## Монеты
 - bitcoin  → BTC/USDT
 - ethereum → ETH/USDT
@@ -329,6 +357,8 @@ src/
   снимок на экране старше ≤ ≈ 35 с
 - Поля монеты — опрос раз в 60 с (`useCoinFields`), бэкенд держит снимок
   60 с, у CoinGecko свой кэш 60 с: отставание до ≈ 3 мин
+- Режим рынка — опрос раз в 5 мин (`useMarketRegime`), без интервала; новый
+  день — после 00:00:05 UTC, на экране не позже ≈ 5 мин спустя
 - Новая свеча → новый AI-комментарий на бэкенде (кэш по фактам свечи); на
   1м — раз в минуту на монету, принято (план TASK-0004, trade-off 6)
 
@@ -385,7 +415,7 @@ src/
   вкладки — не жёлтые.
 - Рост/падение — `up`/`down` (свечи, RSI, гистограмма MACD, полосы
   стакана — покупки/продажи с альфой); `warning` —
-  баннеры, пометки ошибок («Карточка/Деривативы/Стакан/Поля монеты не обновились»,
+  баннеры, пометки ошибок («Карточка/Деривативы/Стакан/Поля монеты/Режим рынка не обновились»,
   «биржа недоступна», «сумма неполная», «ни одна биржа не ответила») и
   регуляторные метки новостей. Не для рыночных состояний:
   «редко» в деривативах — жирным белым (TASK-0007). Серии графика — серые
