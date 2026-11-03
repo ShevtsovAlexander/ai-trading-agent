@@ -8,7 +8,8 @@ NestJS backend информационного дашборда по крипто
 (капитализация, FDV, предложение) и режим рынка по дневным свечам (ADX:
 тренд вверх / вниз / боковик); агрегирует новости и
 AI-свод «Инфополе» — рынок и новости одним абзацем по фактам, посчитанным
-кодом, с проверкой ответа модели (TASK-0012). Своей истории цен не копит — история у Binance
+кодом, с проверкой ответа модели (TASK-0012); компании-держатели монет по
+CoinGecko (TASK-0013). Своей истории цен не копит — история у Binance
 (TASK-0004, `../docs/DECISIONS.md` 2026-10-20).
 
 **Не торговый бот.** Решений BUY/SELL, позиций и кошелька нет — торговое ядро
@@ -39,7 +40,8 @@ AI-свод «Инфополе» — рынок и новости одним а�
 src/
 ├── ai/
 │   ├── ai.module.ts
-│   └── ai.service.ts             — Groq клиент, one-shot complete()
+│   ├── ai.service.ts             — Groq клиент (таймаут GROQ_TIMEOUT_MS 20 с, GROQ_MAX_RETRIES 1), one-shot complete(…, { timeoutMs })
+│   └── ai.service.spec.ts        — 4 теста: таймаут/повторы клиента из конфига, свой таймаут вызова
 ├── backtest/
 │   ├── backtest.controller.ts    — POST /backtest/run
 │   ├── backtest.dto.ts
@@ -49,6 +51,14 @@ src/
 ├── binance/
 │   ├── klines.ts                 — fetchClosedCandles: закрытые свечи постранично по 1000, незакрытая отброшена; вес из заголовка x-mbx-used-weight-1m
 │   └── klines.spec.ts            — 5 тестов на честном фейке HTTP
+├── treasury/                     — TASK-0013 «Компании-держатели»
+│   ├── treasury.types.ts         — Treasury, TreasuryCompany, TTL 1 ч / ошибка 60 с, таймаут 10 с, топ-5 (зеркало — frontend/src/types/treasury.ts)
+│   ├── sources.ts                — fetchTreasury / parseTreasury: CoinGecko companies/public_treasury, строгий разбор, топ по holdings
+│   ├── treasury.service.ts       — снимок по монете (1 ч, ошибка 60 с, inflight), доля от circulating CoinService, 400/502
+│   ├── treasury.controller.ts    — GET /treasury/:coinId
+│   ├── treasury.module.ts        — HttpModule 10 с, CoinModule
+│   ├── fixtures/                 — public-treasury-2026-11-03.json (ответы трёх монет + эталон python)
+│   └── treasury.spec.ts          — 13 тестов
 ├── coin/                         — TASK-0010 «Поля монеты»
 │   ├── coin.types.ts             — CoinFields, COIN_TTL_MS 60 с, COIN_TIMEOUT_MS 10 с (зеркало — frontend/src/types/coin.ts)
 │   ├── sources.ts                — fetchMarkets / parseMarkets: coins/markets CoinGecko, строгий разбор number|null
@@ -122,6 +132,7 @@ src/
 - GET  /derivatives/:coinId/open-interest?step=1d|1h — ряд OI трёх бирж за 30 дней и цена спота (TASK-0008)
 - GET  /orderbook/:coinId                 — стены стакана спота Binance + OKX: 10 крупнейших ступеней с каждой стороны (TASK-0009)
 - GET  /coin/:coinId                      — капитализация, FDV, предложение с CoinGecko (TASK-0010)
+- GET  /treasury/:coinId                  — компании-держатели: всего монет, доля от обращения, топ-5 (TASK-0013)
 - GET  /news                              — крипто-новости из RSS (Cointelegraph, Coindesk, Decrypt)
 - GET  /news/digest                       — свод «Инфополе»: текст модели + факты рынка (TASK-0012); до первого refresh — null
 - POST /backtest/run                      — прогон стратегии на исторических свечах
@@ -414,6 +425,25 @@ circulating, total, max, updatedAt }`. `400` — неизвестная моне
 - Сверка (T3): бэкенд = CoinGecko на одном снимке (`last_updated`), 15/15
   чисел; 3 мин опроса (261 запрос) — по 1 запросу к CoinGecko в минуту.
 
+## Компании-держатели (TASK-0013)
+`GET /treasury/:coinId` → `Treasury { coinId, market, totalHoldings,
+totalValueUsd, companies, shareOfCirculatingPct, top, fetchedAt }`; `top` —
+5 `TreasuryCompany { name, symbol, country, holdings, valueUsd }`. `400` —
+неизвестная монета; `502` — «CoinGecko недоступен» / «CoinGecko: превышен
+лимит запросов» (429).
+- **Источник** — CoinGecko `companies/public_treasury/{coinId}` (id = `coinId`),
+  без ключа. Строгий разбор: числа ≥ 0, строки — строки; топ сортируется сами
+  (порядок источника не обещан). `total_entry_value_usd` не берётся — у
+  половины компаний 0 (пусто).
+- **Доля** — `totalHoldings / circulating` (`CoinService`, общий снимок 60 с)
+  × 100, 2 знака; у CoinGecko `percentage_of_total_supply` разный по смыслу
+  (BTC — от 21 млн). `CoinService` упал — доля `null`, держания отдаются.
+- **Кэш** по монете: успех — 1 ч, ошибка — 60 с; `inflight` склеивает
+  параллельные. Лимит CoinGecko без ключа общий с «Монетой»: держатели ≤ 3
+  запросов в час (9 подряд ручных дали 429 — путь проверен живьём).
+- Потоков ETF нет — источника без ключа не нашли (`../docs/RESEARCH.md`).
+- Сверка (T4): живой бэкенд = curl CoinGecko, 3 монеты (итоги, топ-5, доля).
+
 ## AI-комментарий (market.comment.ts)
 - `describeView(view)` описывает обстановку на последней закрытой свече
   интервала. Промпт запрещает рекомендации и действия («купить», «продать»,
@@ -427,6 +457,14 @@ circulating, total, max, updatedAt }`. `400` — неизвестная моне
   (комментарий — про 5 свечей интервала, промпт запрещает говорить о
   периоде длиннее).
 - Генерится «на лету» в контроллере, в БД не хранится.
+- **Окно ожидания** (TASK-0013): `/market/view` ждёт комментарий не дольше
+  `VIEW_COMMENT_WAIT_MS` (3 с); не успел — `aiComment: null` (фронт:
+  «Комментария нет…»), генерация доходит в фоне и пишет кэш. Генерация в
+  полёте — по `ключ|хеш фактов`; запрос при идущей генерации тех же фактов
+  ждёт остаток того же окна (две вкладки, StrictMode), после окна — `null`
+  сразу. Комментарий прошлой свечи по таймауту не
+  отдаётся. Замер с повисшей моделью: 3,3 с, повторы 0,003 с (без окна — до
+  60 с × 3 попытки умолчаний `groq-sdk`).
 - Кэш — in-memory `Map` по `coinId|interval`, ключ — хеш тех же фактов, что
   уходят в промпт. Факты меняются на каждом закрытии свечи → на 1м Groq
   зовётся раз в минуту на монету (план TASK-0004, trade-off 6).
@@ -441,8 +479,6 @@ circulating, total, max, updatedAt }`. `400` — неизвестная моне
 ## Известное
 - Binance — единственный источник цен: недоступен → `502`, фронт показывает
   баннер. `api.binance.com` недоступен из ряда юрисдикций.
-- `/market/view` ждёт Groq синхронно, таймаута у клиента нет: промах кэша
-  добавляет 1–1.7 с к ответу с ценой (tasklist TASK-0004, «Замечено рядом»).
 - **Режим: 502 навсегда при NaN у листинга.** Плоская полоса или день без
   направленного движения в первых 28 днях монеты дадут NaN до конца ряда —
   монета будет отвечать 502 всегда. У BTC/ETH/SOL ADX последнего дня
@@ -511,6 +547,8 @@ circulating, total, max, updatedAt }`. `400` — неизвестная моне
 GROQ_API_KEY=...
 GROQ_MODEL=openai/gpt-oss-120b   # id модели Groq; дефолт в коде — openai/gpt-oss-120b
 GROQ_REASONING_EFFORT=low        # low|medium|high; off — не слать параметр (модели без reasoning)
+GROQ_TIMEOUT_MS=20000            # таймаут вызова Groq (умолчание groq-sdk — 60 000); перевод ленты — свой, 60 с
+GROQ_MAX_RETRIES=1               # повторы при сбое (умолчание groq-sdk — 2)
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trading_agent
 
 ## Инфраструктура
@@ -528,7 +566,7 @@ npm run start:dev
 
 ## Тесты
 npm run test
-366 тестов, только с внешним оракулом:
+391 тест, только с внешним оракулом:
 - `indicators/indicators.spec.ts` — 16: EMA(9/21/26), RSI(14) на ряде и трёх
   краевых, MACD, BB(20), ширина BB, SMA(5) против technicalindicators; ADX(14)
   / +DI / −DI — каждая из 3338 точек дневной истории BTC (≤ 1e-9), NaN до
@@ -552,9 +590,19 @@ npm run test
   `since`, одна точка и пустой ряд; 3338 ярлыков BTC = эталону Python
   (`fixtures/regime-btc-oracle.json`; это перенос правила, независимость —
   совпадение итогов с замером в RESEARCH).
-- `market/market.comment.spec.ts` — 9: кэш и fallback'и при отказе модели,
+- `ai/ai.service.spec.ts` — 4: таймаут и повторы клиента Groq из конфига,
+  мусор и таймаут 0 → умолчание, свой таймаут вызова.
+- `news/news.translator.spec.ts` — 1: батч перевода с таймаутом 60 с.
+- `treasury/treasury.spec.ts` — 13: разбор реальных ответов трёх монет =
+  эталону python, сортировка, порча полей, URL; сервис — доля от
+  `circulating` (BTC 6,54 %), кэш 1 ч (±1 мс), `inflight`, ошибка 60 с, 429,
+  отказ `CoinService` → доля `null`, 400.
+- `market/market.comment.spec.ts` — 16: кэш и fallback'и при отказе модели,
   точные строки промпта (изменения — арифметика, слова «тренд» нет), разные
-  интервалы — разные записи кэша.
+  интервалы — разные записи кэша; окно ожидания (фейковые таймеры): модель
+  висит — `null` ровно по окну, поздний ответ — из кэша без нового вызова,
+  повтор во время окна — ждёт остаток и получает быстрый ответ, после окна —
+  `null` сразу; новые факты — своя генерация; таймер снимается.
 
 - `digest/market-facts.spec.ts` — 11: факты трёх монет = эталону Python на
   реальных klines 1h (фикстура снята параметрами кода), строка промпта,
@@ -620,7 +668,7 @@ npm run test
 
 Каждый новый тест прогнан против мутанта кода (красный) — итоги в
 `../docs/aidd/tasklist/TASK-0004.md`, `TASK-0007.md`, `TASK-0008.md`,
-`TASK-0009.md`, `TASK-0010.md`, `TASK-0011.md` и `TASK-0012.md`.
+`TASK-0009.md`, `TASK-0010.md`, `TASK-0011.md`, `TASK-0012.md` и `TASK-0013.md`.
 
 `npm run test:e2e` сломан до миграции (ждёт `GET /` → «Hello World!»).
 
