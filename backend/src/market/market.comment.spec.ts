@@ -55,7 +55,6 @@ describe('MarketComment', () => {
       price: recent[4].close,
       previousPrice: recent[3].close,
       ma5: 86020,
-      trend: 'up',
       latest: recent[4],
       recent,
       aiComment: null,
@@ -121,7 +120,7 @@ describe('MarketComment', () => {
       const first = await service.describeView(view());
 
       mockAiService.complete.mockResolvedValueOnce('   ');
-      const second = await service.describeView(view({ trend: 'down' }));
+      const second = await service.describeView(view({ price: 1 }));
 
       expect(mockAiService.complete).toHaveBeenCalledTimes(2);
       expect(second).toBe(first);
@@ -142,6 +141,8 @@ describe('MarketComment', () => {
         { system: string },
       ];
       expect(prompt).toContain('свечи 15 минут');
+      // Тренд за 10 свечей снят в TASK-0011 — режим рынка отдельным маршрутом
+      expect(prompt).not.toMatch(/тренд/i);
       expect(prompt).toContain(
         'Цена, $: 86000 → 86010 → 86020 → 86030 → 86040 (за 5 свечей: рост на 40)',
       );

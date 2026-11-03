@@ -9,6 +9,8 @@ export interface Candle {
   volume: number;
 }
 
+import type { Regime } from './regime';
+
 // Interval/Range, INTERVAL_MS/RANGE_MS, MIN/MAX_CANDLES, isAllowed и формы
 // ответов продублированы во frontend/src/types/market.ts — меняются вместе.
 export type Interval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
@@ -110,8 +112,22 @@ export interface MarketView {
   price: number;
   previousPrice: number;
   ma5: number | null;
-  trend: 'up' | 'down' | 'flat';
   latest: SeriesPoint; // последняя закрытая свеча
   recent: SeriesPoint[]; // 5 последних закрытых, старые → новые (вход AI)
   aiComment: string | null;
+}
+
+// GET /market/regime/:coinId — режим рынка по дневным свечам (TASK-0011),
+// от интервала графика не зависит. Числа — последнего закрытого дня.
+export interface MarketRegime {
+  coinId: string;
+  market: string;
+  regime: Regime;
+  adx: number; // 2 знака отбрасыванием (24,996 → 24,99); ярлык — по точному
+  pdi: number;
+  mdi: number;
+  threshold: number; // черта тренда, 25
+  since: number; // openTime первого дня текущего режима, мс
+  days: number; // дней в текущем режиме, включая последний
+  closedAt: number; // closeTime последнего закрытого дня
 }

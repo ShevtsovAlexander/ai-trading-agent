@@ -31,6 +31,13 @@ export class MarketController {
     return this.marketData.getHistory(coinId, interval, before);
   }
 
+  // Режим рынка по дневным свечам (TASK-0011), от интервала не зависит.
+  // 400 — неизвестная монета; 502 — Binance или режим не посчитан.
+  @Get('regime/:coinId')
+  getRegime(@Param('coinId') coinId: string) {
+    return this.marketData.getRegime(coinId);
+  }
+
   // Последняя закрытая свеча интервала + AI-комментарий к ней (кэш по
   // монете и интервалу; отказ модели → прошлый комментарий или null)
   @Get('view/:coinId')

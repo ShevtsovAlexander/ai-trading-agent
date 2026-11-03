@@ -132,8 +132,32 @@ export interface MarketView {
     price: number;
     previousPrice: number;
     ma5: number | null;
-    trend: 'up' | 'down' | 'flat';
     latest: SeriesPoint;
     recent: SeriesPoint[]; // 5 последних, старые → новые
     aiComment: string | null;
 }
+
+// GET /market/regime/:coinId — режим рынка по дневным свечам (TASK-0011).
+// Зеркало MarketRegime из backend/src/market/market.types.ts. От интервала
+// графика не зависит; числа — последнего закрытого дня.
+export type Regime = 'up' | 'down' | 'range';
+
+export interface MarketRegime {
+    coinId: string;
+    market: string;
+    regime: Regime;
+    adx: number; // 2 знака отбрасыванием; ярлык — по точному
+    pdi: number;
+    mdi: number;
+    threshold: number; // черта тренда, 25
+    since: number; // openTime первого дня текущего режима, мс
+    days: number; // дней в текущем режиме, включая последний
+    closedAt: number; // closeTime последнего закрытого дня, мс
+}
+
+// Монохром, как бывший «Тренд»: жёлтый — только в четырёх местах
+export const REGIME_LABELS: Record<Regime, string> = {
+    up: '↑ Тренд вверх',
+    down: '↓ Тренд вниз',
+    range: '→ Боковик',
+};

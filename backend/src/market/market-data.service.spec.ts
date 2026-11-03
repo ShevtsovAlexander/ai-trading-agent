@@ -5,6 +5,8 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { of, throwError } from 'rxjs';
 import * as ti from 'technicalindicators';
 import {
@@ -604,5 +606,212 @@ describe('MarketDataService', () => {
       expect(warn).toHaveBeenCalledTimes(1);
       expect(service.historyThrottled()).toBe(false);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Режим рынка (TASK-0011): вся дневная история BTCUSDT Binance
+// 2017-08-17…2026-11-02 (фикстура curl) через тот же фейк HTTP. Эталон чисел —
+// technicalindicators.ADX, ярлыка и начала режима — скрипт Python
+// (fixtures/regime-btc-oracle.json).
+// ---------------------------------------------------------------------------
+describe('MarketDataService.getRegime', () => {
+  const DAY = 86_400_000;
+  const fixture = (name: string): unknown =>
+    JSON.parse(readFileSync(join(__dirname, 'fixtures', name), 'utf8'));
+  const DAILY = fixture('klines-1d-btc-2026-11-02.json') as [
+    number,
+    number,
+    number,
+    number,
+  ][];
+  const ORACLE = fixture('regime-btc-oracle.json') as {
+    labels: string;
+    since: number;
+    sinceT: number;
+  };
+  // [openTime, open, high, low, close, volume, closeTime]; open и объём
+  // режиму не нужны
+  const DAILY_ROWS: unknown[][] = DAILY.map(([t, h, l, c]) => [
+    t,
+    String(c),
+    String(h),
+    String(l),
+    String(c),
+    '1',
+    t + DAY - 1,
+  ]);
+  const LAST_T = DAILY[DAILY.length - 1][0]; // 2026-11-02
+  const NOW_D = LAST_T + DAY + 10 * 3_600_000; // 2026-11-03 10:00 UTC
+  const r2 = (x: number) => parseFloat(x.toFixed(2));
+  // ADX — отбрасыванием (сервис, floor2): 28 последних дней — 48,3155 → 48,31
+  const f2 = (x: number) => Math.floor(x * 100) / 100;
+
+  const regimeService = (
+    opts: Parameters<typeof fakeHttp>[0] & { start?: number } = {},
+  ) => makeService({ rows: DAILY_ROWS, start: NOW_D, ...opts });
+
+  it('ответ = эталону: числа последнего дня, ярлык, начало и длина режима', async () => {
+    const { service } = regimeService();
+    const result = await service.getRegime('bitcoin');
+
+    const ref = ti.ADX.calculate({
+      high: DAILY.map((k) => k[1]),
+      low: DAILY.map((k) => k[2]),
+      close: DAILY.map((k) => k[3]),
+      period: 14,
+    });
+    const last = ref[ref.length - 1];
+    expect(ORACLE.labels.length).toBe(ref.length);
+    expect(result).toEqual({
+      coinId: 'bitcoin',
+      market: 'BTC/USDT',
+      regime: 'range', // ORACLE.labels — последний 'r'
+      adx: f2(last.adx),
+      pdi: r2(last.pdi),
+      mdi: r2(last.mdi),
+      threshold: 25,
+      since: ORACLE.sinceT,
+      days: ref.length - ORACLE.since,
+      closedAt: LAST_T + DAY - 1,
+    });
+    expect(ORACLE.labels[ORACLE.labels.length - 1]).toBe('r');
+    expect(result.days).toBe(17);
+  });
+
+  it('запрос — вся история с startTime 0, постранично до последнего закрытого дня', async () => {
+    const { service, calls } = regimeService();
+    await service.getRegime('bitcoin');
+    expect(calls).toHaveLength(4); // 3365 свечей: 1000 + 1000 + 1000 + 365
+    expect(calls[0].startTime).toBe(0);
+    calls.forEach((c) => expect(c.endTime).toBe(LAST_T));
+  });
+
+  it('повтор в тот же день — без запроса; после закрытия дня — новый запрос', async () => {
+    // «Сейчас» — 2026-11-02 10:00: последний закрытый — 11-01
+    const { service, calls, advance } = regimeService({ start: NOW_D - DAY });
+    const first = await service.getRegime('bitcoin');
+    expect(first.closedAt).toBe(LAST_T - 1);
+    const n = calls.length;
+
+    await service.getRegime('bitcoin');
+    advance(DAY - 10 * 3_600_000 + CLOSE_MARGIN_MS - 1); // 11-03 00:00:04.999
+    await service.getRegime('bitcoin');
+    expect(calls).toHaveLength(n);
+
+    advance(1); // 00:00:05 — 11-02 закрыт
+    const second = await service.getRegime('bitcoin');
+    expect(calls.length).toBeGreaterThan(n);
+    expect(second.closedAt).toBe(LAST_T + DAY - 1);
+  });
+
+  it('Binance ещё не отдал закрытый день — режим по прошлому, не кэшируется', async () => {
+    const { service, calls } = regimeService({
+      rowsUpTo: DAILY_ROWS.length - 2,
+    });
+    const result = await service.getRegime('bitcoin');
+    expect(result.closedAt).toBe(LAST_T - 1);
+    const n = calls.length;
+    await service.getRegime('bitcoin');
+    expect(calls.length).toBe(2 * n);
+  });
+
+  it('кэш — по монете: другая монета идёт к Binance', async () => {
+    const { service, calls } = regimeService();
+    await service.getRegime('bitcoin');
+    const n = calls.length;
+    await service.getRegime('ethereum');
+    expect(calls.length).toBe(2 * n);
+  });
+
+  it('ограничитель запросов режим не режет', async () => {
+    const { service, calls } = regimeService({
+      weight: WEIGHT_THROTTLE,
+      rowsUpTo: DAILY_ROWS.length - 2, // не кэшируется — каждый вызов к Binance
+    });
+    await service.getRegime('bitcoin');
+    expect(service.historyThrottled()).toBe(true);
+    const n = calls.length;
+    await expect(service.getRegime('bitcoin')).resolves.toBeDefined();
+    expect(calls.length).toBe(2 * n);
+  });
+
+  it('неизвестная монета — 400 без запроса к Binance', async () => {
+    const { service, calls } = regimeService();
+    await expect(service.getRegime('dogecoin')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it('Binance недоступен — 502', async () => {
+    const { service } = regimeService({ fail: true });
+    await expect(service.getRegime('bitcoin')).rejects.toThrow(
+      BadGatewayException,
+    );
+  });
+
+  it('27 свечей — 502; 28 — одна точка ADX', async () => {
+    // Листинг за 27 / 28 дней до последнего закрытого
+    const tail = (n: number) => DAILY_ROWS.slice(DAILY_ROWS.length - n);
+    await expect(
+      regimeService({ rows: tail(27) }).service.getRegime('bitcoin'),
+    ).rejects.toThrow('Binance не отдал свечей');
+
+    const result = await regimeService({ rows: tail(28) }).service.getRegime(
+      'bitcoin',
+    );
+    const t28 = DAILY.slice(DAILY.length - 28);
+    const ref = ti.ADX.calculate({
+      high: t28.map((k) => k[1]),
+      low: t28.map((k) => k[2]),
+      close: t28.map((k) => k[3]),
+      period: 14,
+    });
+    expect(ref).toHaveLength(1);
+    expect(result.adx).toBe(f2(ref[0].adx));
+    expect(result.adx).toBe(48.31); // r2 дал бы 48,32
+    expect(result.days).toBe(1);
+    expect(result.since).toBe(LAST_T);
+  });
+
+  it('ярлык — по неокруглённому ADX: 2023-04-29, ADX 24,98 после тренда вверх — боковик', async () => {
+    // История до 2023-04-29 включительно; у эталона этот день — 'r', прошлый —
+    // 'u', ADX 24,9836 (мутант «ярлык по округлённому ADX» дал бы тренд)
+    const i = DAILY.findIndex((k) => k[0] === Date.UTC(2023, 3, 29));
+    const j = i - 27; // индекс в ярлыках эталона
+    expect(ORACLE.labels.slice(j - 1, j + 1)).toBe('ur');
+    const { service } = regimeService({
+      rows: DAILY_ROWS.slice(0, i + 1),
+      start: DAILY[i][0] + DAY + 10 * 3_600_000,
+    });
+    const result = await service.getRegime('bitcoin');
+    expect(result.regime).toBe('range');
+    expect(result.adx).toBe(24.98);
+    expect(result.since).toBe(DAILY[i][0]);
+    expect(result.days).toBe(1);
+  });
+
+  it('плоские свечи (NaN в ADX/DI) — 502, а не молчаливый ярлык', async () => {
+    // 40 дней без движения, затем 40 дней роста: NaN с начала залипает до
+    // конца ряда (критик T2)
+    const t0 = LAST_T - 79 * DAY;
+    const rows = Array.from({ length: 80 }, (_, i) => {
+      const c = i < 40 ? 100 : 100 + (i - 39) * 2;
+      return [
+        t0 + i * DAY,
+        String(c),
+        String(c + (i < 40 ? 0 : 1)),
+        String(c - (i < 40 ? 0 : 1)),
+        String(c),
+        '1',
+        t0 + (i + 1) * DAY - 1,
+      ];
+    });
+    await expect(
+      regimeService({ rows }).service.getRegime('bitcoin'),
+    ).rejects.toThrow(
+      'ADX не определён: в начале истории нет направленного движения',
+    );
   });
 });

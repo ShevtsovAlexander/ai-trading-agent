@@ -136,22 +136,65 @@ export function calcSMA(prices: number[], period: number): number[] {
   return result;
 }
 
-// Тренд по числу шагов вверх/вниз: построчный перенос PriceService.getTrend
-// (сервис удалён в TASK-0004).
-// Цены — от старых к новым (как свечи Binance): развёрнутый ряд молча
-// инвертирует тренд. Окно (последние 10 цен) отрезает вызывающий.
-// Эталона у правила нет — тестом не покрыто.
-export function calcTrend(prices: number[]): 'up' | 'down' | 'flat' {
-  if (prices.length < 2) return 'flat';
+// ADX Уайлдера с +DI/−DI — как technicalindicators.ADX (TASK-0011).
+// Ряды длиной close.length, до индекса 2·period − 1 — NaN у всех трёх: эталон
+// отдаёт DI только вместе с ADX, раньше сверять не с чем (TASK-0011.2).
+// TR, +DM, −DM — с индекса 1 (нужна прошлая свеча). Сглаживание TR/DM —
+// суммой: первая — сумма period значений (индекс period), дальше
+// S = S − S/period + x. DI = 100 · S(DM) / S(TR); DX = 100 · |+DI − −DI| /
+// (+DI + −DI). ADX — среднее Уайлдера по DX: первое — простое среднее period
+// DX (индексы period…2·period − 1), дальше ADX += (DX − ADX) / period.
+export function calcADX(
+  high: number[],
+  low: number[],
+  close: number[],
+  period = 14,
+): { adx: number[]; pdi: number[]; mdi: number[] } {
+  const len = close.length;
+  const adx = new Array<number>(len).fill(NaN);
+  const pdi = new Array<number>(len).fill(NaN);
+  const mdi = new Array<number>(len).fill(NaN);
+  const first = 2 * period - 1;
+  if (len <= first) return { adx, pdi, mdi };
 
-  let ups = 0,
-    downs = 0;
-  for (let i = 1; i < prices.length; i++) {
-    if (prices[i] > prices[i - 1]) ups++;
-    else if (prices[i] < prices[i - 1]) downs++;
+  let sTR = 0,
+    sPDM = 0,
+    sMDM = 0,
+    sumDX = 0,
+    avgDX = NaN;
+  for (let i = 1; i < len; i++) {
+    const tr = Math.max(
+      high[i] - low[i],
+      Math.abs(high[i] - close[i - 1]),
+      Math.abs(low[i] - close[i - 1]),
+    );
+    const up = high[i] - high[i - 1];
+    const down = low[i - 1] - low[i];
+    const pdm = up > down && up > 0 ? up : 0;
+    const mdm = down > up && down > 0 ? down : 0;
+
+    if (i <= period) {
+      sTR += tr;
+      sPDM += pdm;
+      sMDM += mdm;
+      if (i < period) continue;
+    } else {
+      sTR = sTR - sTR / period + tr;
+      sPDM = sPDM - sPDM / period + pdm;
+      sMDM = sMDM - sMDM / period + mdm;
+    }
+
+    const p = (sPDM * 100) / sTR;
+    const m = (sMDM * 100) / sTR;
+    const dx = (Math.abs(p - m) / (p + m)) * 100;
+    if (i < first) {
+      sumDX += dx;
+      continue;
+    }
+    avgDX = i === first ? (sumDX + dx) / period : avgDX + (dx - avgDX) / period;
+    adx[i] = avgDX;
+    pdi[i] = p;
+    mdi[i] = m;
   }
-
-  if (ups > downs * 1.5) return 'up';
-  if (downs > ups * 1.5) return 'down';
-  return 'flat';
+  return { adx, pdi, mdi };
 }

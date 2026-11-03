@@ -8,12 +8,6 @@ interface Props {
     data: MarketView;
 }
 
-const TREND_LABELS = {
-    up: '↑ Рост',
-    down: '↓ Падение',
-    flat: '→ Боковик',
-};
-
 // --- styled ---
 
 const Container = styled.div`
@@ -166,15 +160,12 @@ export const MarketStateCard = ({ data }: Props) => {
                 <Price>${data.price.toLocaleString()}</Price>
             </PriceBlock>
 
-            {/* MA5 + тренд */}
+            {/* MA5; «Тренд» по 10 свечам снят — режим рынка отдельным блоком
+                (TASK-0011) */}
             <StatsGrid>
                 <Stat>
                     <StatLabel>MA5</StatLabel>
                     <StatValue>{fmt(data.ma5, '$')}</StatValue>
-                </Stat>
-                <Stat>
-                    <StatLabel>Тренд</StatLabel>
-                    <StatValue>{TREND_LABELS[data.trend]}</StatValue>
                 </Stat>
             </StatsGrid>
 

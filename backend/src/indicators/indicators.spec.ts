@@ -1,12 +1,21 @@
 /**
- * Сравнение calcEMA / calcRSI / calcMACD / calcBB / calcSMA из indicators.ts
+ * Сравнение calcEMA / calcRSI / calcMACD / calcBB / calcSMA / calcADX из indicators.ts
  * с библиотекой technicalindicators на одних и тех же ценах.
  *
  * Запуск: npm run test -- indicators
  */
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import * as ti from 'technicalindicators';
-import { calcBB, calcEMA, calcMACD, calcRSI, calcSMA } from './indicators';
+import {
+  calcADX,
+  calcBB,
+  calcEMA,
+  calcMACD,
+  calcRSI,
+  calcSMA,
+} from './indicators';
 
 // ---------------------------------------------------------------------------
 // Детерминированные тестовые цены (50 значений) — синусоида + линейный тренд
@@ -295,5 +304,111 @@ describe('calcSMA vs technicalindicators.SMA', () => {
 
     expect(discrepancies.length).toBe(0);
     expect(mine.slice(0, offset).every(Number.isNaN)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADX (TASK-0011): вся дневная история BTCUSDT Binance 2017-08-17…2026-11-02,
+// [t, high, low, close] — фикстура curl
+// ---------------------------------------------------------------------------
+const DAILY = JSON.parse(
+  readFileSync(
+    join(
+      __dirname,
+      '..',
+      'market',
+      'fixtures',
+      'klines-1d-btc-2026-11-02.json',
+    ),
+    'utf8',
+  ),
+) as [number, number, number, number][];
+
+describe('calcADX vs technicalindicators.ADX', () => {
+  const high = DAILY.map((k) => k[1]);
+  const low = DAILY.map((k) => k[2]);
+  const close = DAILY.map((k) => k[3]);
+  const FIRST = 2 * 14 - 1;
+
+  it('фикстура — 3365 закрытых дней без дыр', () => {
+    expect(DAILY.length).toBe(3365);
+    const DAY = 86_400_000;
+    expect(
+      DAILY.every((k, i) => i === 0 || k[0] - DAILY[i - 1][0] === DAY),
+    ).toBe(true);
+  });
+
+  it('ADX(14), +DI, −DI — каждая точка истории совпадает с эталоном до 1e-9', () => {
+    const mine = calcADX(high, low, close, 14);
+    const ref = ti.ADX.calculate({ high, low, close, period: 14 });
+
+    expect(ref.length).toBe(close.length - FIRST);
+    const bad: string[] = [];
+    ref.forEach((r, j) => {
+      const i = j + FIRST;
+      (['adx', 'pdi', 'mdi'] as const).forEach((f) => {
+        if (!(Math.abs(mine[f][i] - r[f]) <= 1e-9)) {
+          bad.push(`${f}[${i}] ${mine[f][i]} ≠ ${r[f]}`);
+        }
+      });
+    });
+    expect(bad).toEqual([]);
+  });
+
+  it('до индекса 2·14 − 1 все три ряда — NaN, длина = длине входа', () => {
+    const mine = calcADX(high, low, close, 14);
+    (['adx', 'pdi', 'mdi'] as const).forEach((f) => {
+      expect(mine[f].length).toBe(close.length);
+      expect(mine[f].slice(0, FIRST).every(Number.isNaN)).toBe(true);
+      expect(Number.isNaN(mine[f][FIRST])).toBe(false);
+    });
+  });
+
+  it('ряд короче 2·14 свечей — весь NaN (эталон пуст)', () => {
+    const n = 2 * 14 - 1;
+    const mine = calcADX(high.slice(0, n), low.slice(0, n), close.slice(0, n));
+    expect(
+      ti.ADX.calculate({
+        high: high.slice(0, n),
+        low: low.slice(0, n),
+        close: close.slice(0, n),
+        period: 14,
+      }).length,
+    ).toBe(0);
+    (['adx', 'pdi', 'mdi'] as const).forEach((f) => {
+      expect(mine[f].length).toBe(n);
+      expect(mine[f].every(Number.isNaN)).toBe(true);
+    });
+  });
+
+  it('равные движения вверх и вниз (+DM = −DM = 0) — как эталон', () => {
+    // Каждый третий день максимум растёт ровно на столько, на сколько падает
+    // минимум: ни +DM, ни −DM. В истории BTC такого дня нет (мутант «≥» там
+    // зелёный) — известный случай на ручном ряде, эталон тот же.
+    const h: number[] = [],
+      l: number[] = [],
+      c: number[] = [];
+    let mid = 100;
+    for (let i = 0; i < 40; i++) {
+      const w = i % 3 === 0 ? 2 + (i % 2) : 1.5;
+      mid += i % 3 === 0 ? 0 : i % 2 ? 1.25 : -0.75;
+      h.push(mid + w);
+      l.push(mid - w);
+      c.push(mid + (i % 2 ? 0.5 : -0.5));
+    }
+    let ties = 0;
+    for (let i = 1; i < h.length; i++) {
+      if (h[i] - h[i - 1] === l[i - 1] - l[i] && h[i] > h[i - 1]) ties++;
+    }
+    expect(ties).toBeGreaterThan(3);
+
+    const mine = calcADX(h, l, c, 14);
+    const ref = ti.ADX.calculate({ high: h, low: l, close: c, period: 14 });
+    expect(ref.length).toBe(h.length - FIRST);
+    ref.forEach((r, j) => {
+      (['adx', 'pdi', 'mdi'] as const).forEach((f) => {
+        expect(Math.abs(mine[f][j + FIRST] - r[f])).toBeLessThanOrEqual(1e-9);
+      });
+    });
   });
 });
