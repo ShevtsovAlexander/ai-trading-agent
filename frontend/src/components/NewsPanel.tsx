@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import styled from 'styled-components';
-import { getNews, getDigest, type NewsItem, type Digest } from '../api/news';
+import { getNews, getDigest, type NewsItem, type Digest, type MarketFact } from '../api/news';
 import { useDelayedFlag } from '../hooks/useDelayedFlag';
 import { Skeleton } from './Skeleton';
 
@@ -72,10 +72,53 @@ export const NewsPanel = () => {
                     <DigestHead>
                         <DigestLabel>AI-свод</DigestLabel>
                         <DigestMeta>
-                            {digest.itemCount} новостей · {formatTime(digest.generatedAt)}
+                            {digest.itemCount > 0 ? `${digest.itemCount} новостей` : 'без новостей'} ·{' '}
+                            {formatTime(digest.generatedAt)}
                         </DigestMeta>
                     </DigestHead>
-                    <DigestText>{digest.summary}</DigestText>
+                    {digest.summary !== null ? (
+                        <DigestText>{digest.summary}</DigestText>
+                    ) : (
+                        <NoSummary>
+                            Свод не сгенерирован: модель недоступна или её ответ не прошёл проверку
+                            чисел. Ниже — только числа.
+                        </NoSummary>
+                    )}
+                    {/* Факты рынка — посчитаны кодом, текст модели строится по ним
+                        (TASK-0012): человек сверяет текст с числами */}
+                    {(digest.market.facts.length > 0 || digest.market.failed.length > 0) && (
+                        <Facts>
+                            {digest.market.facts.map((f) => (
+                                <FactRow key={f.coinId}>
+                                    <Ticker>{f.market.split('/')[0]}</Ticker>
+                                    <FactMono>{ru(f.price, 2)} USDT</FactMono>
+                                    <Change $dir={Math.sign(f.change24hPct)}>
+                                        {f.change24hPct > 0 ? '+' : ''}
+                                        {ru(f.change24hPct, 2)} % за 24 ч
+                                    </Change>
+                                    <span>
+                                        объём <FactMono>{usdShort(f.volume24hUsd)}</FactMono> ·{' '}
+                                        <FactMono>{ru(f.volumeRatio30d, 2)}</FactMono> к среднему за 30 дн.
+                                    </span>
+                                    <span>{regimeText(f)}</span>
+                                </FactRow>
+                            ))}
+                            {digest.market.failed.map((id) => (
+                                <FactRow key={id}>
+                                    <Ticker>{TICKER[id] ?? id}</Ticker>
+                                    <Failed>нет данных Binance</Failed>
+                                </FactRow>
+                            ))}
+                        </Facts>
+                    )}
+                    <DigestNote>
+                        {digest.market.facts.length > 0 &&
+                            `Числа посчитаны кодом по часовым свечам Binance, час закрыт ${clock(
+                                Math.max(...digest.market.facts.map((f) => f.at)),
+                            )}. `}
+                        Текст пишет модель по этим числам и заголовкам и может ошибаться в словах —
+                        сверяйте с числами. Не прогноз и не указание к сделке.
+                    </DigestNote>
                 </DigestCard>
             )}
 
@@ -109,6 +152,22 @@ export const NewsPanel = () => {
         </Container>
     );
 };
+
+const ru = (n: number, digits: number) =>
+    n.toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+const usdShort = (usd: number) =>
+    usd >= 1e9 ? `${ru(usd / 1e9, 2)} млрд USDT` : `${ru(usd / 1e6, 0)} млн USDT`;
+
+const REGIME_RU = { up: 'тренд вверх', down: 'тренд вниз', range: 'боковик' } as const;
+const regimeText = (f: MarketFact) =>
+    f.regime === null ? 'режим — нет данных' : `${REGIME_RU[f.regime]} ${f.regimeDays} дн.`;
+
+const TICKER: Record<string, string> = { bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL' };
+
+// Время закрытия часа — местное, как «обновлено» у карточки «Монета»
+const clock = (ms: number) =>
+    new Date(ms + 1).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
 const formatTime = (iso: string): string => {
     const diff = Date.now() - new Date(iso).getTime();
@@ -169,6 +228,58 @@ const DigestText = styled.p`
   color: ${({ theme }) => theme.colors.body};
   line-height: 1.55;
   white-space: pre-line; /* LLM может вернуть переносы по темам */
+`;
+
+const NoSummary = styled.p`
+  font-size: ${({ theme }) => theme.fontSize.md};
+  color: ${({ theme }) => theme.colors.muted};
+  line-height: 1.55;
+`;
+
+const Facts = styled.div`
+  border-top: 1px solid ${({ theme }) => theme.colors.hairline};
+  margin-top: 10px;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+`;
+
+const FactRow = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  color: ${({ theme }) => theme.colors.body};
+`;
+
+const Ticker = styled.span`
+  font-weight: 600;
+  color: ${({ theme }) => theme.colors.ink};
+  min-width: 32px;
+`;
+
+const FactMono = styled.span`
+  font-family: ${({ theme }) => theme.font.mono};
+  color: ${({ theme }) => theme.colors.bodyStrong};
+`;
+
+// Рост/падение — up/down, как свечи (frontend/CLAUDE.md, «Дизайн»)
+const Change = styled.span<{ $dir: number }>`
+  font-family: ${({ theme }) => theme.font.mono};
+  color: ${({ theme, $dir }) =>
+    $dir > 0 ? theme.colors.up : $dir < 0 ? theme.colors.down : theme.colors.bodyStrong};
+`;
+
+const Failed = styled.span`
+  color: ${({ theme }) => theme.colors.warning};
+`;
+
+const DigestNote = styled.p`
+  margin-top: 8px;
+  font-size: ${({ theme }) => theme.fontSize.xs};
+  color: ${({ theme }) => theme.colors.muted};
+  line-height: 1.5;
 `;
 
 const SkeletonDigest = styled.div`
