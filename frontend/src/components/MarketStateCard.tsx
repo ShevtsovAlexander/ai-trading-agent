@@ -86,6 +86,12 @@ const SectionTitle = styled.div`
     margin-bottom: 8px;
 `;
 
+const AiPending = styled.p`
+  font-size: ${({ theme }) => theme.fontSize.sm};
+  color: ${({ theme }) => theme.colors.muted};
+  line-height: 1.5;
+`;
+
 const AiReasoning = styled.p`
   font-size: ${({ theme }) => theme.fontSize.md};
   color: ${({ theme }) => theme.colors.body};
@@ -227,7 +233,14 @@ export const MarketStateCard = ({ data }: Props) => {
             <Divider />
 
             <SectionTitle>AI</SectionTitle>
-            <AiReasoning>{data.aiComment}</AiReasoning>
+            {data.aiComment !== null ? (
+                <AiReasoning>{data.aiComment}</AiReasoning>
+            ) : (
+                // null — модель не успела за окно бэкенда или недоступна:
+                // причину фронт не знает, обещаний не даём (критик T5);
+                // прошлой свечи комментарий не показываем (критик T3)
+                <AiPending>Комментария нет — модель не ответила или недоступна.</AiPending>
+            )}
         </Container>
     );
 };

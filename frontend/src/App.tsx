@@ -22,6 +22,11 @@ import { useOpenInterestHistory } from "./hooks/useOpenInterestHistory";
 import { useOrderBook } from "./hooks/useOrderBook";
 import { useCoinFields } from "./hooks/useCoinFields";
 import { useMarketRegime } from "./hooks/useMarketRegime";
+import { useTreasury } from "./hooks/useTreasury";
+import {
+  TreasuryPanel,
+  TreasuryPanelSkeleton,
+} from "./components/TreasuryPanel";
 import {
   MarketRegimePanel,
   MarketRegimePanelSkeleton,
@@ -163,6 +168,8 @@ export default function App() {
   const coinFields = useCoinFields(activeCoin.id);
   // Режим рынка — по монете, без интервала, опрос 5 мин (TASK-0011)
   const regime = useMarketRegime(activeCoin.id);
+  // Компании-держатели — по монете, опрос 10 мин (TASK-0013)
+  const treasury = useTreasury(activeCoin.id);
 
   return (
     <Wrapper>
@@ -292,6 +299,14 @@ export default function App() {
               )}
               {coinFields.data && <CoinFieldsPanel data={coinFields.data} />}
               {coinFields.loading && <CoinFieldsPanelSkeleton />}
+              {/* Компании-держатели — под «Монетой» (план TASK-0013) */}
+              {treasury.error && (
+                <CardError>
+                  Компании-держатели не обновились: {errorText(treasury.error)}.
+                </CardError>
+              )}
+              {treasury.data && <TreasuryPanel data={treasury.data} />}
+              {treasury.loading && <TreasuryPanelSkeleton />}
             </Left>
             <IndicatorHistoryTable
               coinId={activeCoin.id}

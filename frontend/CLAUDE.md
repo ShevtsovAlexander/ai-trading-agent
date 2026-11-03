@@ -25,12 +25,14 @@ src/
 │   ├── errors.ts                 — LoadError, classify, errorText: тексты ошибок для графика, карточки и деривативов (перенос из App.tsx, TASK-0007)
 │   ├── derivatives.ts            — getDerivatives (/derivatives/:coinId), getOpenInterestHistory (/derivatives/:coinId/open-interest?step=)
 │   ├── coin.ts                   — getCoinFields (/coin/:coinId), TASK-0010
+│   ├── treasury.ts               — getTreasury (/treasury/:coinId), TASK-0013
 │   ├── orderbook.ts              — getOrderBook (/orderbook/:coinId), TASK-0009
 │   ├── market.ts                 — getCandles (/market/candles), getHistory (/market/candles/:coin/history), getView (/market/view), getRegime (/market/regime), TASK-0011
 │   └── news.ts                   — getNews, getDigest + типы NewsItem/Digest/MarketFact (зеркало backend/src/digest/digest.types.ts)
 ├── components/
 │   ├── MarketStateCard.tsx       — карточка последней закрытой свечи: цена/MA5, EMA/RSI/MACD/BB, подпись свечи, секция «AI» («Тренд» снят в TASK-0011)
 │   ├── MarketRegimePanel.tsx     — блок «Режим рынка» под карточкой рынка: ярлык, с какого дня, ADX и черта, DI, день закрыт (UTC), оговорка; скелетон
+│   ├── TreasuryPanel.tsx         — блок «Компании-держатели» под «Монетой»: держат / стоимость, доля от обращения, топ-5, оговорка; скелетон
 │   ├── CoinFieldsPanel.tsx       — карточка «Монета» под карточкой рынка: капитализация, FDV, предложение, доля от максимума или «лимита нет», оговорка; скелетон
 │   ├── DerivativesPanel.tsx      — панель «Деривативы» под графиком: ставка и перевес от нормы, «как часто», OI трёх бирж, оговорка; скелетон
 │   ├── OpenInterestChart.tsx     — карточка «Открытые позиции · 30 дней»: вкладки шага, lightweight-charts (сумма OI справа, цена слева), легенда по перекрестию, «без X», оговорка
@@ -49,12 +51,14 @@ src/
 ├── types/
 │   ├── derivatives.ts            — Derivatives, FundingView, Stress, FundingState, OiStep, OiPoint, OpenInterestHistory (зеркало backend/src/derivatives/derivatives.types.ts)
 │   ├── coin.ts                   — CoinFields (зеркало backend/src/coin/coin.types.ts)
+│   ├── treasury.ts               — Treasury, TreasuryCompany (зеркало backend/src/treasury/treasury.types.ts)
 │   ├── orderbook.ts              — Wall, ExchangeState, OrderBookSnapshot (зеркало backend/src/orderbook/orderbook.types.ts и walls.ts)
 │   └── market.ts                 — Interval/Range, границы, isAllowed, nearestAllowed, Candle, SeriesPoint, MarketSeries, MarketView, HistoryChunk/HISTORY_CHUNK, Regime, MarketRegime, REGIME_LABELS
 ├── hooks/
 │   ├── useDerivatives.ts         — деривативы монеты: опрос 60 с, токен запроса, данные и ошибка только текущей монеты, скелетон 300 мс
 │   ├── useOpenInterestHistory.ts — история OI выбранного шага: опрос 5 мин, токен, данные и ошибка только текущих монеты и шага, скелетон 300 мс
 │   ├── useCoinFields.ts          — поля монеты: опрос 60 с, токен, данные и ошибка только текущей монеты, скелетон 300 мс
+│   ├── useTreasury.ts            — компании-держатели: опрос 10 мин, токен, данные и ошибка только текущей монеты, скелетон 300 мс
 │   ├── useMarketRegime.ts        — режим рынка: опрос 5 мин, без интервала, токен, данные и ошибка только текущей монеты, скелетон 300 мс
 │   ├── useOrderBook.ts           — стакан монеты: опрос 20 с, токен, данные и ошибка только текущей монеты, без скелетона
 │   ├── useDelayedFlag.ts         — флаг, который включается, если условие держится дольше N мс
@@ -337,6 +341,25 @@ src/
   трём монетам, интервалы без запроса и скелетона, место, поздний ответ
   прошлой монеты, 502, часовой пояс UTC−8 (`../docs/aidd/tasklist/TASK-0011.md`, T8).
 
+## Компании-держатели (TASK-0013)
+Блок `TreasuryPanel` в `Left` под «Монетой». Данные — `useTreasury(coin)`,
+приёмы `useCoinFields`, опрос раз в 10 мин (`TREASURY_POLL_MS`; бэкенд держит
+снимок час). Ошибка — «Компании-держатели не обновились: …» (`warning`).
+- **Показ** — «Держат публичные компании 1,31 млн BTC», «Стоимость $102,21
+  млрд», «181 компания · 6,54 % монет в обращении» (склонение 1 / 2–4 / 5+;
+  доля `null` — «нет
+  данных»), топ-5: название, тикер акции (`muted`), монет и стоимость (mono).
+  Подпись «BTC · CoinGecko · получено ЧЧ:ММ».
+- **Оговорка**: только публичные компании по сводке CoinGecko из отчётов —
+  держания запаздывают на дни и недели, доля — от монет в обращении сейчас;
+  не ETF и не фонды, не потоки; не указание к сделке.
+- Приёмка — CDP, 14 проверок (`../docs/aidd/tasklist/TASK-0013.md`, T5).
+
+## AI-комментарий карточки при медленной модели (TASK-0013)
+`aiComment: null` — модель не успела за окно бэкенда (3 с) или недоступна,
+причину фронт не знает: карточка пишет «Комментария нет — модель не ответила
+или недоступна.» (`muted`), без обещаний, а не пустой абзац.
+
 ## Свод «Инфополе» (TASK-0012)
 Карточка «AI-свод» в `NewsPanel` (загрузка — как раньше: раз в час, без
 `catch`). Свод — один абзац модели о рынке и новостях; под ним — **строки
@@ -375,6 +398,7 @@ src/
   выбранного шага; новая часовая точка у бэкенда — в ≈ hh:10
 - Стакан — опрос раз в 20 с (`useOrderBook`), бэкенд держит снимок 15 с:
   снимок на экране старше ≤ ≈ 35 с
+- Компании-держатели — опрос раз в 10 мин (`useTreasury`), бэкенд — снимок час
 - Поля монеты — опрос раз в 60 с (`useCoinFields`), бэкенд держит снимок
   60 с, у CoinGecko свой кэш 60 с: отставание до ≈ 3 мин
 - Режим рынка — опрос раз в 5 мин (`useMarketRegime`), без интервала; новый
@@ -435,7 +459,7 @@ src/
   вкладки — не жёлтые.
 - Рост/падение — `up`/`down` (свечи, RSI, гистограмма MACD, полосы
   стакана — покупки/продажи с альфой); `warning` —
-  баннеры, пометки ошибок («Карточка/Деривативы/Стакан/Поля монеты/Режим рынка не обновились»,
+  баннеры, пометки ошибок («Карточка/Деривативы/Стакан/Поля монеты/Режим рынка/Компании-держатели не обновились»,
   «биржа недоступна», «сумма неполная», «ни одна биржа не ответила») и
   регуляторные метки новостей. Не для рыночных состояний:
   «редко» в деривативах — жирным белым (TASK-0007). Серии графика — серые

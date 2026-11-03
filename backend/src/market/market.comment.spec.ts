@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { MarketComment } from './market.comment';
+import { MarketComment, VIEW_COMMENT_WAIT_MS } from './market.comment';
 import { AiService } from '../ai/ai.service';
 import { MarketView, SeriesPoint } from './market.types';
 
@@ -208,6 +208,127 @@ describe('MarketComment', () => {
       expect(m5).toBe('Про 5 минут.');
       expect(h1).toBe('Про час.');
       expect(again).toBe('Про 5 минут.');
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // Окно ожидания (TASK-0013): /market/view не стоит за моделью
+  // ---------------------------------------------------------------------
+  describe('describeView — окно ожидания модели', () => {
+    afterEach(() => jest.useRealTimers());
+
+    // Ответ модели, который отпускает тест
+    const deferred = () => {
+      let resolve!: (v: string) => void;
+      const promise = new Promise<string>((r) => (resolve = r));
+      return { promise, resolve };
+    };
+    const silenceWarn = () =>
+      jest
+        .spyOn(
+          (service as unknown as { logger: { warn: () => void } }).logger,
+          'warn',
+        )
+        .mockImplementation(() => undefined);
+
+    it('модель висит, прошлого нет — null ровно по окну; догенерированный — следующим вызовом без нового вызова модели', async () => {
+      jest.useFakeTimers();
+      silenceWarn();
+      const slow = deferred();
+      mockAiService.complete.mockReturnValueOnce(slow.promise);
+
+      let got: string | null | undefined;
+      void service.describeView(view()).then((c) => (got = c));
+      await jest.advanceTimersByTimeAsync(VIEW_COMMENT_WAIT_MS - 1);
+      expect(got).toBeUndefined(); // ещё ждём
+      await jest.advanceTimersByTimeAsync(1);
+      expect(got).toBeNull();
+
+      slow.resolve('Поздний комментарий.');
+      await jest.advanceTimersByTimeAsync(0);
+      expect(await service.describeView(view())).toBe('Поздний комментарий.');
+      expect(mockAiService.complete).toHaveBeenCalledTimes(1);
+    });
+
+    it('модель висит при новых фактах — null, а не комментарий прошлой свечи', async () => {
+      mockAiService.complete.mockResolvedValueOnce('Старый.');
+      expect(await service.describeView(view())).toBe('Старый.');
+
+      jest.useFakeTimers();
+      silenceWarn();
+      mockAiService.complete.mockReturnValueOnce(deferred().promise);
+      const p = service.describeView(view({ price: 1 }));
+      await jest.advanceTimersByTimeAsync(VIEW_COMMENT_WAIT_MS);
+      expect(await p).toBeNull();
+    });
+
+    it('повтор во время окна ждёт остаток того же окна и получает быстрый ответ', async () => {
+      jest.useFakeTimers();
+      silenceWarn();
+      const slow = deferred();
+      mockAiService.complete.mockReturnValueOnce(slow.promise);
+      const a = service.describeView(view());
+      await jest.advanceTimersByTimeAsync(1000);
+      const b = service.describeView(view()); // как второй вызов StrictMode / вкладка
+      slow.resolve('Один.');
+      await jest.advanceTimersByTimeAsync(0);
+      expect([await a, await b]).toEqual(['Один.', 'Один.']);
+      expect(mockAiService.complete).toHaveBeenCalledTimes(1);
+    });
+
+    it('повтор во время окна — ждёт только остаток: null ровно по концу первого окна', async () => {
+      jest.useFakeTimers();
+      silenceWarn();
+      mockAiService.complete.mockReturnValueOnce(deferred().promise);
+      void service.describeView(view());
+      await jest.advanceTimersByTimeAsync(1000);
+      let b: string | null | undefined;
+      void service.describeView(view()).then((x) => (b = x));
+      await jest.advanceTimersByTimeAsync(VIEW_COMMENT_WAIT_MS - 1000 - 1);
+      expect(b).toBeUndefined();
+      await jest.advanceTimersByTimeAsync(1);
+      expect(b).toBeNull();
+    });
+
+    it('повтор после окна при висящей генерации — null сразу, без нового вызова модели', async () => {
+      jest.useFakeTimers();
+      silenceWarn();
+      const slow = deferred();
+      mockAiService.complete.mockReturnValueOnce(slow.promise);
+      void service.describeView(view());
+      await jest.advanceTimersByTimeAsync(VIEW_COMMENT_WAIT_MS);
+      let c: string | null | undefined;
+      void service.describeView(view()).then((x) => (c = x));
+      await jest.advanceTimersByTimeAsync(0);
+      expect(c).toBeNull();
+      expect(mockAiService.complete).toHaveBeenCalledTimes(1);
+      slow.resolve('Один.');
+      await jest.advanceTimersByTimeAsync(0);
+      expect(await service.describeView(view())).toBe('Один.'); // из кэша
+      expect(mockAiService.complete).toHaveBeenCalledTimes(1);
+    });
+
+    it('новые факты, пока модель думает над старыми, — своя генерация (не старый ответ)', async () => {
+      jest.useFakeTimers();
+      silenceWarn();
+      const old = deferred();
+      mockAiService.complete.mockReturnValueOnce(old.promise);
+      mockAiService.complete.mockResolvedValueOnce('Про новую свечу.');
+      void service.describeView(view()); // старая свеча, модель висит
+      const fresh = service.describeView(view({ price: 1 })); // новая свеча
+      await jest.advanceTimersByTimeAsync(0);
+      expect(mockAiService.complete).toHaveBeenCalledTimes(2);
+      expect(await fresh).toBe('Про новую свечу.');
+      old.resolve('Про старую.');
+    });
+
+    it('быстрая модель — комментарий в том же вызове, таймер снят', async () => {
+      jest.useFakeTimers();
+      mockAiService.complete.mockResolvedValueOnce('Быстро.');
+      const p = service.describeView(view());
+      await jest.advanceTimersByTimeAsync(0);
+      expect(await p).toBe('Быстро.');
+      expect(jest.getTimerCount()).toBe(0);
     });
   });
 });
