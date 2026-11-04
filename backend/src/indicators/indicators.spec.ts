@@ -20,9 +20,8 @@ import {
 // ---------------------------------------------------------------------------
 // Детерминированные тестовые цены (50 значений) — синусоида + линейный тренд
 // ---------------------------------------------------------------------------
-const PRICES = Array.from(
-  { length: 50 },
-  (_, i) => parseFloat((100 + i * 0.5 + Math.sin(i * 0.4) * 8).toFixed(6)),
+const PRICES = Array.from({ length: 50 }, (_, i) =>
+  parseFloat((100 + i * 0.5 + Math.sin(i * 0.4) * 8).toFixed(6)),
 );
 
 const TOLERANCE = 0.0001; // допустимое расхождение (0.01%)
@@ -61,10 +60,14 @@ describe('calcEMA vs technicalindicators.EMA', () => {
       }
 
       if (discrepancies.length > 0) {
-        console.log(`\n=== EMA(${period}) расхождения (${discrepancies.length}/${tiResult.length}): ===`);
+        console.log(
+          `\n=== EMA(${period}) расхождения (${discrepancies.length}/${tiResult.length}): ===`,
+        );
         discrepancies.slice(0, 10).forEach((d) => console.log(' ', d));
       } else {
-        console.log(`EMA(${period}): все ${tiResult.length} значений совпадают ✓`);
+        console.log(
+          `EMA(${period}): все ${tiResult.length} значений совпадают ✓`,
+        );
       }
 
       expect(discrepancies.length).toBe(0);
@@ -103,7 +106,9 @@ describe('calcRSI vs technicalindicators.RSI', () => {
     }
 
     if (discrepancies.length > 0) {
-      console.log(`\n=== RSI(14) расхождения (${discrepancies.length}/${tiResult.length}): ===`);
+      console.log(
+        `\n=== RSI(14) расхождения (${discrepancies.length}/${tiResult.length}): ===`,
+      );
       discrepancies.forEach((d) => console.log(' ', d));
     } else {
       console.log(`RSI(14): все ${tiResult.length} значений совпадают ✓`);
@@ -121,8 +126,14 @@ describe('calcRSI vs technicalindicators.RSI', () => {
   // эталон сначала проверяет avgLoss и отдаёт 100.
   [
     { name: 'ровный ряд', values: Array.from({ length: 20 }, () => 100) },
-    { name: 'монотонный рост', values: Array.from({ length: 20 }, (_, i) => 100 + i) },
-    { name: 'монотонное падение', values: Array.from({ length: 20 }, (_, i) => 100 - i) },
+    {
+      name: 'монотонный рост',
+      values: Array.from({ length: 20 }, (_, i) => 100 + i),
+    },
+    {
+      name: 'монотонное падение',
+      values: Array.from({ length: 20 }, (_, i) => 100 - i),
+    },
   ].forEach(({ name, values }) => {
     it(`RSI(14) — ${name} совпадает с эталоном`, () => {
       const mine = calcRSI(values, 14).slice(14);
@@ -231,8 +242,8 @@ describe('calcBB vs technicalindicators.BollingerBands', () => {
 
     const fields: Array<{ name: string; myArr: number[]; tiKey: string }> = [
       { name: 'middle', myArr: mine.middle, tiKey: 'middle' },
-      { name: 'upper',  myArr: mine.upper,  tiKey: 'upper'  },
-      { name: 'lower',  myArr: mine.lower,  tiKey: 'lower'  },
+      { name: 'upper', myArr: mine.upper, tiKey: 'upper' },
+      { name: 'lower', myArr: mine.lower, tiKey: 'lower' },
     ];
 
     fields.forEach(({ name, myArr, tiKey }) => {
@@ -251,9 +262,13 @@ describe('calcBB vs technicalindicators.BollingerBands', () => {
       });
 
       if (discrepancies.length > 0) {
-        console.log(`\n=== BB ${name} расхождения (${discrepancies.length}/${tiResult.length}): ===`);
+        console.log(
+          `\n=== BB ${name} расхождения (${discrepancies.length}/${tiResult.length}): ===`,
+        );
         discrepancies.forEach((d) => console.log(' ', d));
-        console.log('NOTE: расхождение в stdDev может быть из-за population vs sample variance.');
+        console.log(
+          'NOTE: расхождение в stdDev может быть из-за population vs sample variance.',
+        );
       } else {
         console.log(`BB ${name}: все ${tiResult.length} значений совпадают ✓`);
       }

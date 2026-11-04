@@ -1,4 +1,13 @@
-import { IsString, IsNumber, IsNotEmpty, IsPositive, IsOptional, IsIn, Min, Max } from 'class-validator';
+import {
+  IsString,
+  IsNumber,
+  IsNotEmpty,
+  IsPositive,
+  IsOptional,
+  IsIn,
+  Min,
+  Max,
+} from 'class-validator';
 
 export class RunBacktestDto {
   @IsString()
