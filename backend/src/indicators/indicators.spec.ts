@@ -204,12 +204,12 @@ describe('calcMACD vs technicalindicators.MACD', () => {
       }
     });
 
-    [
+    const groups: [string, string[]][] = [
       ['MACD line', discrepanciesMacd],
       ['Signal', discrepanciesSignal],
       ['Histogram', discrepanciesHist],
-    ].forEach(([name, diffs]) => {
-      const arr = diffs as string[];
+    ];
+    groups.forEach(([name, arr]) => {
       if (arr.length > 0) {
         console.log(`\n=== ${name} расхождения (${arr.length}): ===`);
         arr.forEach((d) => console.log(' ', d));

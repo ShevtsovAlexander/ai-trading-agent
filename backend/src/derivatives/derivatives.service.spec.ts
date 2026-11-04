@@ -377,7 +377,7 @@ const oiFake = () => {
         msg: '',
         data: (OI_FX.okx[OKX_PERIOD[p.period]] as string[][])
           .filter((r) => p.end === undefined || Number(r[0]) < p.end)
-          .slice(0, p.limit),
+          .slice(0, p.limit as number),
       };
     }
     if (src === 'bybit') {
@@ -387,7 +387,7 @@ const oiFake = () => {
       return {
         retCode: 0,
         result: {
-          list: rows.slice(at, at + p.limit),
+          list: rows.slice(at, at + (p.limit as number)),
           nextPageCursor: more ? String(at + p.limit) : '',
         },
       };
@@ -404,7 +404,7 @@ const oiFake = () => {
     }
     return (OI_FX.spot[p.interval] as any[][])
       .filter((k) => k[0] >= p.startTime && k[0] <= p.endTime)
-      .slice(0, p.limit);
+      .slice(0, p.limit as number);
   };
   const http = {
     get: (url: string, { params }: { params: Raw }) => {

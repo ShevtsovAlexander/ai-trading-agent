@@ -367,13 +367,13 @@ const okxFake = (rows: string[][]) =>
     msg: '',
     data: rows
       .filter((r) => p.end === undefined || Number(r[0]) < p.end)
-      .slice(0, p.limit),
+      .slice(0, p.limit as number),
   }));
 // Bybit: курсор — смещение в списке (новые первыми)
 const bybitFake = (rows: Raw[]) =>
   recording((p) => {
     const at = p.cursor === undefined ? 0 : Number(p.cursor);
-    const list = rows.slice(at, at + p.limit);
+    const list = rows.slice(at, at + (p.limit as number));
     const more = at + p.limit < rows.length;
     return {
       retCode: 0,
@@ -584,7 +584,7 @@ describe('выход по from: страницы старше окна полн�
     'Binance %s (шаг %i мс): %i запр., строки — только окно',
     async (period, step, requests) => {
       const rows = OI.binance[period];
-      const pad = older(rows[0].timestamp, step)
+      const pad = older(rows[0].timestamp as number, step)
         .reverse()
         .map((t) => ({ ...rows[0], timestamp: t }));
       const from = fromFor(step);
