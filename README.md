@@ -17,7 +17,6 @@
 
 **Backend**
 - NestJS 11 (TypeScript)
-- Prisma 7 + PostgreSQL
 - Groq SDK (LLM — `openai/gpt-oss-120b`, настраивается через `GROQ_MODEL`)
 - @nestjs/schedule (cron новостей)
 - class-validator
@@ -48,7 +47,7 @@ React Dashboard  ──HTTP──>  NestJS API
         │                       │                        │
      Binance                Groq LLM                  Binance
 
-   NewsService · DigestService ── RSS · Groq   (Prisma / PostgreSQL — без записи цен)
+   NewsService · DigestService ── RSS · Groq
 ```
 
 Backend построен по модульному принципу NestJS: каждый домен (market, backtest, news, digest, ai) — отдельный модуль. Цены не копятся в БД — история у Binance (`docs/DECISIONS.md`, 2026-10-20). Торговое ядро снято при переходе к дашборду; его версия сохранена тегом `v1-trading-bot`.
@@ -115,16 +114,14 @@ Decrypt ───────┘   (RSS parse,      (LLM-перевод      Ser
 ```bash
 cd backend
 npm install
-npm run db:start        # PostgreSQL в Docker
-npx prisma migrate dev
+cp .env.example .env     # вписать GROQ_API_KEY
 npm run start:dev        # http://localhost:3000
 ```
 
-Переменные окружения (`.env`):
-```
-GROQ_API_KEY=...
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trading_agent
-```
+База данных и Docker не нужны. Все настройки описаны в `backend/.env.example`.
+Без значения `GROQ_API_KEY` работают цены, графики и новости на языке оригинала, а
+AI-комментарий, перевод новостей и текст свода не генерируются. Если строки с ключом
+в `.env` нет совсем, бэкенд не запустится.
 
 **Frontend**
 ```bash

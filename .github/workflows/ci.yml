@@ -1,0 +1,30 @@
+name: CI
+
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ${{ matrix.part }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [backend, frontend]
+    defaults:
+      run:
+        working-directory: ${{ matrix.part }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: install
+        run: npm ci
+      - name: Проверка кода
+        run: npm run lint:check
+      - name: Сборка
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run build
