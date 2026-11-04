@@ -26,7 +26,7 @@ export class NewsTranslator {
 
   // Хирагана/катакана/кандзи (CJK Unified) + хангыль. Если такое осталось
   // в «переводе» — модель не довела строку до конца, считаем её битой.
-  private static readonly CJK = /[　-鿿가-힯]/;
+  private static readonly CJK = /[\u3000-鿿가-힯]/;
 
   private isValid(ru: string): boolean {
     return ru.length > 0 && !NewsTranslator.CJK.test(ru);
@@ -108,7 +108,7 @@ ${numbered}`;
   private set(id: string, ru: string): void {
     // FIFO-эвикшн: Map хранит порядок вставки, выкидываем самый старый ключ
     if (this.cache.size >= this.MAX_ENTRIES) {
-      const oldest = this.cache.keys().next().value;
+      const oldest = this.cache.keys().next().value as string | undefined;
       if (oldest !== undefined) this.cache.delete(oldest);
     }
     this.cache.set(id, ru);

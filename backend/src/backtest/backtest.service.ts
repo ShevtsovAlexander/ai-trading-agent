@@ -10,8 +10,13 @@ const PAGE_SIZE = 1000;
 const REQUEST_DELAY_MS = 200;
 
 const INTERVAL_MINUTES: Record<string, number> = {
-  '1m': 1, '5m': 5, '15m': 15, '30m': 30,
-  '1h': 60, '4h': 240, '1d': 1440,
+  '1m': 1,
+  '5m': 5,
+  '15m': 15,
+  '30m': 30,
+  '1h': 60,
+  '4h': 240,
+  '1d': 1440,
 };
 
 // Порог шума живого контура; сам он снят в TASK-0001.3 вместе с вердиктами,
@@ -63,10 +68,17 @@ export class BacktestService {
     const highs = candles.map((c) => c.high);
     const lows = candles.map((c) => c.low);
 
-    const { macd: macdLine, signal: macdSignal, histogram: macdHist } =
-      calcMACD(closes);
-    const { upper: bbUpper, middle: bbMiddle, lower: bbLower, bandwidth: bbBandwidth } =
-      calcBB(closes);
+    const {
+      macd: macdLine,
+      signal: macdSignal,
+      histogram: macdHist,
+    } = calcMACD(closes);
+    const {
+      upper: bbUpper,
+      middle: bbMiddle,
+      lower: bbLower,
+      bandwidth: bbBandwidth,
+    } = calcBB(closes);
 
     const ind: IndicatorArrays = {
       ema9: calcEMA(closes, 9),
@@ -142,9 +154,18 @@ export class BacktestService {
 
       // 2. Ищем новый сигнал если позиции нет
       if (position === null && !isNaN(ind.atr[i])) {
-        const signal = this.calcSignal(i, dto.symbol, closes, ind, dto.confluenceThreshold ?? 4.0);
+        const signal = this.calcSignal(
+          i,
+          dto.symbol,
+          closes,
+          ind,
+          dto.confluenceThreshold ?? 4.0,
+        );
         const direction = dto.direction ?? 'BOTH';
-        if (signal !== 'SKIP' && (direction === 'BOTH' || signal === direction)) {
+        if (
+          signal !== 'SKIP' &&
+          (direction === 'BOTH' || signal === direction)
+        ) {
           const entryCandle = candles[i + 1];
           const entryPrice = entryCandle.open;
           const stopDistance = ind.atr[i] * dto.atrMultiplier;
@@ -260,13 +281,19 @@ export class BacktestService {
     };
   }
 
-  private async fetchCandles(symbol: string, interval: string, days: number): Promise<Candle[]> {
+  private async fetchCandles(
+    symbol: string,
+    interval: string,
+    days: number,
+  ): Promise<Candle[]> {
     const intervalMinutes = INTERVAL_MINUTES[interval] ?? 5;
-    const totalCandles = Math.ceil(days * 24 * 60 / intervalMinutes);
+    const totalCandles = Math.ceil((days * 24 * 60) / intervalMinutes);
     const allCandles: Candle[] = [];
     let endTime = Date.now();
 
-    this.logger.log(`Загружаю ${totalCandles} свечей ${interval} для ${symbol} за ${days} дней`);
+    this.logger.log(
+      `Загружаю ${totalCandles} свечей ${interval} для ${symbol} за ${days} дней`,
+    );
 
     while (allCandles.length < totalCandles) {
       const remaining = totalCandles - allCandles.length;
@@ -344,7 +371,8 @@ export class BacktestService {
   ): 'up' | 'down' | 'flat' {
     if (i < points - 1) return 'flat';
     const slice = closes.slice(i - points + 1, i + 1);
-    let ups = 0, downs = 0;
+    let ups = 0,
+      downs = 0;
     for (let j = 1; j < slice.length; j++) {
       if (slice[j] > slice[j - 1]) ups++;
       else if (slice[j] < slice[j - 1]) downs++;
@@ -380,8 +408,10 @@ export class BacktestService {
 
     // MACD (вес 2.0)
     if (!isNaN(ind.macdLine[i]) && !isNaN(ind.macdSignal[i])) {
-      if (ind.macdLine[i] > ind.macdSignal[i] && ind.macdHist[i] > 0) buy += 2.0;
-      else if (ind.macdLine[i] < ind.macdSignal[i] && ind.macdHist[i] < 0) sell += 2.0;
+      if (ind.macdLine[i] > ind.macdSignal[i] && ind.macdHist[i] > 0)
+        buy += 2.0;
+      else if (ind.macdLine[i] < ind.macdSignal[i] && ind.macdHist[i] < 0)
+        sell += 2.0;
     }
 
     // Тренд (вес 1.0)

@@ -24,7 +24,6 @@ CoinGecko (TASK-0013). Своей истории цен не копит — ис
 - @nestjs/schedule — cron новостей (раз в час); цены по крону больше не собираются
 - class-validator — валидация входящих данных
 - groq-sdk — AI через Groq (модель из GROQ_MODEL, дефолт openai/gpt-oss-120b)
-- Prisma 7 + @prisma/adapter-pg — ORM для PostgreSQL
 - Binance API — закрытые свечи (`klines`) для дашборда и бэктеста; монеты —
   только пары Binance (BTC/ETH/SOL), CoinGecko-fallback снят в TASK-0004
 - Деривативы (TASK-0007) — Binance USDⓈ-M (`fapi.binance.com`: ставка,
@@ -114,9 +113,6 @@ src/
 │   ├── orderbook.module.ts       — HttpModule с таймаутом 10 с
 │   ├── fixtures/                 — books-2026-11-02.json (сырые ответы бирж 3 монет + ошибки + эталон стен от скрипта Python)
 │   └── *.spec.ts                 — sources 33, walls 24, service 21
-├── prisma/
-│   ├── prisma.module.ts          — @Global(), экспортирует PrismaService
-│   └── prisma.service.ts         — PrismaClient + @prisma/adapter-pg
 ├── app.controller.ts             — GET /health
 ├── app.module.ts                 — корневой модуль
 ├── app.service.ts
@@ -456,7 +452,7 @@ totalValueUsd, companies, shareOfCirculatingPct, top, fetchedAt }`; `top` —
   «Тренд за 10 свечей» снят в TASK-0011; режим рынка в промпт не подаётся
   (комментарий — про 5 свечей интервала, промпт запрещает говорить о
   периоде длиннее).
-- Генерится «на лету» в контроллере, в БД не хранится.
+- Генерится «на лету» в контроллере, хранится только в кэше в памяти.
 - **Окно ожидания** (TASK-0013): `/market/view` ждёт комментарий не дольше
   `VIEW_COMMENT_WAIT_MS` (3 с); не успел — `aiComment: null` (фронт:
   «Комментария нет…»), генерация доходит в фоне и пишет кэш. Генерация в
@@ -471,10 +467,9 @@ totalValueUsd, companies, shareOfCirculatingPct, top, fetchedAt }`; `top` —
 - Отказ модели не роняет маршрут: весь `generate()` под try, fallback на
   прошлый комментарий ключа, иначе `null`.
 
-## Модели БД
-- `PriceSnapshot`, `MarketSnapshot` — **архив**: с TASK-0004 в них никто не
-  пишет и никто не читает. Схема и данные оставлены, миграции нет
-  (план TASK-0004, trade-off 4); удаление — отдельным шагом, если понадобится.
+## Хранение
+Базы данных нет: всё считается по запросу и держится в памяти процесса. Снята в
+TASK-0014, как достать прежний архив — `../docs/DECISIONS.md`.
 
 ## Известное
 - Binance — единственный источник цен: недоступен → `502`, фронт показывает
@@ -544,25 +539,27 @@ totalValueUsd, companies, shareOfCirculatingPct, top, fetchedAt }`; `top` —
   данным не проверялось (критик TASK-0006.8).
 
 ## Переменные окружения (.env)
+Образец — `.env.example`, комментарии там. Строка `GROQ_API_KEY` обязательна: без неё
+конструктор Groq падает при старте; с пустым значением модель отвечает 401, остальное
+работает. Пустые `GROQ_MODEL` и `GROQ_REASONING_EFFORT` значение по умолчанию не дают
+(`??` пропускает пустую строку), поэтому в образце они закомментированы.
+
 GROQ_API_KEY=...
 GROQ_MODEL=openai/gpt-oss-120b   # id модели Groq; дефолт в коде — openai/gpt-oss-120b
 GROQ_REASONING_EFFORT=low        # low|medium|high; off — не слать параметр (модели без reasoning)
 GROQ_TIMEOUT_MS=20000            # таймаут вызова Groq (умолчание groq-sdk — 60 000); перевод ленты — свой, 60 с
 GROQ_MAX_RETRIES=1               # повторы при сбое (умолчание groq-sdk — 2)
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trading_agent
-
-## Инфраструктура
-- Docker — postgres:16 контейнер
-- npm run db:start   →  docker compose up -d
-- npm run db:stop    →  docker compose down
-- npm run db:migrate →  prisma migrate dev
 
 ## Запуск
-npm run db:start
 npm run start:dev
 
-`npm run start:prod` нерабочий: зовёт `node dist/main`, а сборка кладёт точку
-входа в `dist/src/main.js`. Прод-запуск вручную — `node dist/src/main`.
+База данных и Docker не нужны. Сборка кладёт точку входа в `dist/main.js`, её запускает
+`npm run start:prod`.
+
+## Проверки
+npm run lint:check  — без автоисправления, предупреждения тоже считаются ошибкой
+npm run build
+Обе команды выполняет автопроверка на GitHub (`.github/workflows/ci.yml`).
 
 ## Тесты
 npm run test
