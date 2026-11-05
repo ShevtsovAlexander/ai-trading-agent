@@ -17,8 +17,10 @@ import {
   DerivativesPanelSkeleton,
 } from "./components/DerivativesPanel";
 import { OpenInterestChart } from "./components/OpenInterestChart";
+import { LiquidationsChart } from "./components/LiquidationsChart";
 import { useDerivatives } from "./hooks/useDerivatives";
 import { useOpenInterestHistory } from "./hooks/useOpenInterestHistory";
+import { useLiquidations } from "./hooks/useLiquidations";
 import { useOrderBook } from "./hooks/useOrderBook";
 import { useCoinFields } from "./hooks/useCoinFields";
 import { useMarketRegime } from "./hooks/useMarketRegime";
@@ -36,6 +38,7 @@ import {
   CoinFieldsPanelSkeleton,
 } from "./components/CoinFieldsPanel";
 import type { OiStep } from "./types/derivatives";
+import type { LiqPeriod } from "./types/liquidations";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
 import { useChartHistory } from "./hooks/useChartHistory";
 import { mergeSeries } from "./components/chartData";
@@ -162,6 +165,9 @@ export default function App() {
   // (TASK-0008, PRD 8)
   const [oiStep, setOiStep] = useState<OiStep>("1d");
   const oiHistory = useOpenInterestHistory(activeCoin.id, oiStep);
+  // Ликвидации — своя загрузка и период, 1М по умолчанию (TASK-0015)
+  const [liqPeriod, setLiqPeriod] = useState<LiqPeriod>("1m");
+  const liquidations = useLiquidations(activeCoin.id, liqPeriod);
   // Стакан — своя загрузка, опрос 20 с (TASK-0009, план «Поток данных»)
   const orderBook = useOrderBook(activeCoin.id);
   // Поля монеты — своя загрузка, опрос 60 с (TASK-0010)
@@ -266,6 +272,19 @@ export default function App() {
               step={oiStep}
               onStepChange={setOiStep}
               loading={oiHistory.loading}
+            />
+            {/* Ликвидации — своя карточка, как история OI (план TASK-0015) */}
+            {liquidations.error && (
+              <CardError>
+                График ликвидаций не обновился: {errorText(liquidations.error)}.
+              </CardError>
+            )}
+            <LiquidationsChart
+              data={liquidations.data}
+              market={activeCoin.market}
+              period={liqPeriod}
+              onPeriodChange={setLiqPeriod}
+              loading={liquidations.loading}
             />
           </DerivativesRow>
 

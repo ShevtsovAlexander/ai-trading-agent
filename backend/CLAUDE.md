@@ -33,6 +33,8 @@ CoinGecko (TASK-0013). Своей истории цен не копит — ис
 - Поля монеты (TASK-0010) — CoinGecko `GET /api/v3/coins/markets`, один
   запрос на три монеты, без ключа. Свечей и цены с CoinGecko нет — только
   капитализация, FDV и предложение
+- Ликвидации (TASK-0015) — Coinalyze `liquidation-history`, необязательный ключ
+  `COINALYZE_API_KEY`, 40 вызовов в минуту. Суммы неполные (`../docs/RESEARCH.md`)
 - technicalindicators — только в тестах, эталон формул индикаторов
 
 ## Структура проекта
@@ -50,6 +52,15 @@ src/
 ├── binance/
 │   ├── klines.ts                 — fetchClosedCandles: закрытые свечи постранично по 1000, незакрытая отброшена; вес из заголовка x-mbx-used-weight-1m
 │   └── klines.spec.ts            — 5 тестов на честном фейке HTTP
+├── liquidations/                 — TASK-0015 «Ликвидации»
+│   ├── liquidations.types.ts     — символы Coinalyze, периоды 1d/1m/1y, сроки кэша, Liquidations (зеркало — frontend/src/types/liquidations.ts)
+│   ├── sources.ts                — fetchLiquidations / parseLiquidations: ключ заголовком, секунды → мс, строгий разбор чисел JSON
+│   ├── series.ts                 — buildLiqSeries (сумма бирж на полной сетке, null без записи), sumLast24h
+│   ├── liquidations.service.ts   — ключ, кэш до следующего закрытия, один запрос в полёте, пауза по Retry-After, 400/502
+│   ├── liquidations.controller.ts — GET /liquidations/:coinId?period=
+│   ├── liquidations.module.ts    — HttpModule с таймаутом 10 с
+│   ├── fixtures/                 — history-2026-11-05.json (ответы Coinalyze параметрами кода + эталон Python)
+│   └── liquidations.spec.ts      — 50 тестов
 ├── treasury/                     — TASK-0013 «Компании-держатели»
 │   ├── treasury.types.ts         — Treasury, TreasuryCompany, TTL 1 ч / ошибка 60 с, таймаут 10 с, топ-5 (зеркало — frontend/src/types/treasury.ts)
 │   ├── sources.ts                — fetchTreasury / parseTreasury: CoinGecko companies/public_treasury, строгий разбор, топ по holdings
@@ -129,6 +140,7 @@ src/
 - GET  /orderbook/:coinId                 — стены стакана спота Binance + OKX: 10 крупнейших ступеней с каждой стороны (TASK-0009)
 - GET  /coin/:coinId                      — капитализация, FDV, предложение с CoinGecko (TASK-0010)
 - GET  /treasury/:coinId                  — компании-держатели: всего монет, доля от обращения, топ-5 (TASK-0013)
+- GET  /liquidations/:coinId?period=1d|1m|1y — ликвидации по времени, сумма за 24 часа (TASK-0015)
 - GET  /news                              — крипто-новости из RSS (Cointelegraph, Coindesk, Decrypt)
 - GET  /news/digest                       — свод «Инфополе»: текст модели + факты рынка (TASK-0012); до первого refresh — null
 - POST /backtest/run                      — прогон стратегии на исторических свечах
@@ -421,6 +433,23 @@ circulating, total, max, updatedAt }`. `400` — неизвестная моне
 - Сверка (T3): бэкенд = CoinGecko на одном снимке (`last_updated`), 15/15
   чисел; 3 мин опроса (261 запрос) — по 1 запросу к CoinGecko в минуту.
 
+## Ликвидации (TASK-0015)
+`GET /liquidations/:coinId?period=1d|1m|1y` → `Liquidations { coinId, market, period, stepMs, exchanges,
+last24h, points }`. Решение — `../docs/DECISIONS.md` 2026-11-05, замеры — `../docs/RESEARCH.md`.
+- **Периоды:** `1d` — 15 минут × 96, `1m` — час × 720, `1y` — день × 365; только USDT-контракты Binance +
+  OKX + Bybit одним вызовом. `last24h` всегда по 15 минутам, поэтому на 1М и 1Г — два ряда.
+- **Точки:** полная сетка закрытых свечей; нет записи ни у одной биржи — `longUsd`/`shortUsd` = `null`, не 0.
+  Свеча закрыта через минуту после конца (`LIQ_CLOSE_MARGIN_MS`).
+- **Ошибки:** 400 — монета или период; 502 — нет ключа (без запроса), 401/403, 429, отказ, порча, все биржи
+  пусты; отказ ряда 15 минут роняет и 1М/1Г. Нет биржи или её ряд пуст за всё окно — `{ exchange, error }`,
+  сумма без неё.
+- **Кэш:** до закрытия следующей свечи + минута. Неполный ряд и ошибка — 60 с. Дневной ряд без записи за
+  последний день — 60 с. Запрос в полёте один на монету и период. 429 — пауза всем монетам по `Retry-After`
+  (приходит дробным), без него 60 с; поздний ответ паузу не сокращает.
+- **Ключ:** только в заголовке; в журнал идут код и текст, а не ошибка axios целиком (в ней заголовки).
+- **Сверка с OKX:** `python3 -I scripts/coinalyze-vs-okx.py` из `backend/`; код выхода 2 — стоп PRD 5.
+- Замолчавшая биржа не обнаруживается: столбики просто ниже, пока ряд за окно не пуст целиком.
+
 ## Компании-держатели (TASK-0013)
 `GET /treasury/:coinId` → `Treasury { coinId, market, totalHoldings,
 totalValueUsd, companies, shareOfCirculatingPct, top, fetchedAt }`; `top` —
@@ -544,6 +573,7 @@ TASK-0014, как достать прежний архив — `../docs/DECISION
 работает. Пустые `GROQ_MODEL` и `GROQ_REASONING_EFFORT` значение по умолчанию не дают
 (`??` пропускает пустую строку), поэтому в образце они закомментированы.
 
+COINALYZE_API_KEY=...            # необязательный; без него блок ликвидаций — 502 с причиной
 GROQ_API_KEY=...
 GROQ_MODEL=openai/gpt-oss-120b   # id модели Groq; дефолт в коде — openai/gpt-oss-120b
 GROQ_REASONING_EFFORT=low        # low|medium|high; off — не слать параметр (модели без reasoning)
@@ -563,7 +593,9 @@ npm run build
 
 ## Тесты
 npm run test
-391 тест, только с внешним оракулом:
+441 тест, только с внешним оракулом:
+- `liquidations/liquidations.spec.ts` — 50: разбор и ряд — реальные ответы Coinalyze против эталона Python,
+  сервис — кэш, лимит, отказы, ключа нет в журнале.
 - `indicators/indicators.spec.ts` — 16: EMA(9/21/26), RSI(14) на ряде и трёх
   краевых, MACD, BB(20), ширина BB, SMA(5) против technicalindicators; ADX(14)
   / +DI / −DI — каждая из 3338 точек дневной истории BTC (≤ 1e-9), NaN до

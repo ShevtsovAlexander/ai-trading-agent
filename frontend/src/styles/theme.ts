@@ -38,6 +38,10 @@ export const theme = {
         // Открытые позиции (TASK-0008): сумма — светлой, цена — тонкой серой
         oi: palette.bodyStrong,
         oiPrice: palette.muted,
+        // Ликвидации (TASK-0015): стороны различает положение — зелёный и
+        // красный значат рост и падение, а ликвидация — ни то, ни другое
+        liqLong: palette.bodyStrong,
+        liqShort: palette.muted,
         // Стакан (TASK-0009): полосы поверх последних свечей — полупрозрачные
         // рост/падение (план, trade-off 7); наведённая — плотнее
         wallBid: `${palette.up}80`,

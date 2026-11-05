@@ -10,6 +10,7 @@ import { DerivativesModule } from './derivatives/derivatives.module';
 import { OrderbookModule } from './orderbook/orderbook.module';
 import { CoinModule } from './coin/coin.module';
 import { TreasuryModule } from './treasury/treasury.module';
+import { LiquidationsModule } from './liquidations/liquidations.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { TreasuryModule } from './treasury/treasury.module';
     OrderbookModule,
     CoinModule,
     TreasuryModule,
+    LiquidationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

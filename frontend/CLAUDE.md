@@ -24,6 +24,7 @@ src/
 │   ├── client.ts                 — общий axios-инстанс (baseURL localhost:3000)
 │   ├── errors.ts                 — LoadError, classify, errorText: тексты ошибок для графика, карточки и деривативов (перенос из App.tsx, TASK-0007)
 │   ├── derivatives.ts            — getDerivatives (/derivatives/:coinId), getOpenInterestHistory (/derivatives/:coinId/open-interest?step=)
+│   ├── liquidations.ts           — getLiquidations (/liquidations/:coinId?period=), TASK-0015
 │   ├── coin.ts                   — getCoinFields (/coin/:coinId), TASK-0010
 │   ├── treasury.ts               — getTreasury (/treasury/:coinId), TASK-0013
 │   ├── orderbook.ts              — getOrderBook (/orderbook/:coinId), TASK-0009
@@ -36,6 +37,8 @@ src/
 │   ├── CoinFieldsPanel.tsx       — карточка «Монета» под карточкой рынка: капитализация, FDV, предложение, доля от максимума или «лимита нет», оговорка; скелетон
 │   ├── DerivativesPanel.tsx      — панель «Деривативы» под графиком: ставка и перевес от нормы, «как часто», OI трёх бирж, оговорка; скелетон
 │   ├── OpenInterestChart.tsx     — карточка «Открытые позиции · 30 дней»: вкладки шага, lightweight-charts (сумма OI справа, цена слева), легенда по перекрестию, «без X», оговорка
+│   ├── LiquidationsChart.tsx     — карточка «Ликвидации»: вкладки 1Д/1М/1Г, сумма за 24 часа, столбики лонгов вверх и шортов вниз, легенда, оговорка
+│   ├── InfoHint.tsx              — значок «?» в круглой рамке с подсказкой: наведение, Tab, Esc
 │   ├── IndicatorHistoryTable.tsx — последние 50 точек ряда графика, новые сверху, 4 колонки
 │   ├── PriceChart.tsx            — оболочка графика: заголовок, подпись видимого отрезка, селект свечи (интервал) и периода (диапазон), легенда значений, метка истории у левого края
 │   ├── CandleChart.tsx           — lightweight-charts: свечи, EMA9/EMA21, границы и заливка BB, метка последней цены, перекрестие, край для догрузки
@@ -50,6 +53,7 @@ src/
 │   └── theme.ts                  — токены ClickHouse: цвета, серии графика, шрифты, радиусы, размеры
 ├── types/
 │   ├── derivatives.ts            — Derivatives, FundingView, Stress, FundingState, OiStep, OiPoint, OpenInterestHistory (зеркало backend/src/derivatives/derivatives.types.ts)
+│   ├── liquidations.ts           — Liquidations, LiqPoint, Last24h, LiqPeriod (зеркало backend/src/liquidations/liquidations.types.ts)
 │   ├── coin.ts                   — CoinFields (зеркало backend/src/coin/coin.types.ts)
 │   ├── treasury.ts               — Treasury, TreasuryCompany (зеркало backend/src/treasury/treasury.types.ts)
 │   ├── orderbook.ts              — Wall, ExchangeState, OrderBookSnapshot (зеркало backend/src/orderbook/orderbook.types.ts и walls.ts)
@@ -57,6 +61,7 @@ src/
 ├── hooks/
 │   ├── useDerivatives.ts         — деривативы монеты: опрос 60 с, токен запроса, данные и ошибка только текущей монеты, скелетон 300 мс
 │   ├── useOpenInterestHistory.ts — история OI выбранного шага: опрос 5 мин, токен, данные и ошибка только текущих монеты и шага, скелетон 300 мс
+│   ├── useLiquidations.ts        — ликвидации выбранного периода: опрос 5 мин, токен, данные и ошибка только текущих монеты и периода, скелетон 300 мс
 │   ├── useCoinFields.ts          — поля монеты: опрос 60 с, токен, данные и ошибка только текущей монеты, скелетон 300 мс
 │   ├── useTreasury.ts            — компании-держатели: опрос 10 мин, токен, данные и ошибка только текущей монеты, скелетон 300 мс
 │   ├── useMarketRegime.ts        — режим рынка: опрос 5 мин, без интервала, токен, данные и ошибка только текущей монеты, скелетон 300 мс
@@ -251,6 +256,20 @@ src/
   всех 30 / 720 точках трёх монет, ленивые часы, смена монеты и поздний
   ответ, отказ каждой биржи (`../docs/aidd/tasklist/TASK-0008.md`, T7).
 
+## Ликвидации (TASK-0015)
+Карточка `LiquidationsChart` в `DerivativesRow` под графиком открытых позиций, смонтирована всегда.
+- **Данные** — `useLiquidations(coin, period)`, приёмы `useOpenInterestHistory`, опрос 5 мин; период 1М по
+  умолчанию. Ряд и сумму отдаёт бэкенд, фронт не считает. Ошибка — «График ликвидаций не обновился: …» над
+  карточкой, текст причины — от бэкенда.
+- **График** — две `HistogramSeries`: лонги вверх (`chart.liqLong`), шорты вниз (`chart.liqShort`, значение со
+  знаком минус только на графике, шкала показывает модуль). Серые: зелёный и красный значат рост и падение.
+  Нет записи — пустая точка, ось не схлопывается; легенда пишет «нет записей».
+- **Сумма** — «За 24 часа до ЧЧ:ММ», рядом `InfoHint`: «Сумма может быть неполной. Настоящая сумма обычно
+  больше: источник видит не все ликвидации». Слова «лонги/шорты» здесь есть — их требует PRD, оговорка поясняет.
+- **Подпись** — «USDT-контракты Binance + OKX + Bybit — не весь рынок», «нет записей X — сумма может быть
+  неполной» (`warning`), ссылка на Coinalyze: условие бесплатного API. На 1Г даты в UTC.
+- Приёмка — headless Chrome + CDP (`../docs/aidd/tasklist/TASK-0015.md`, T7).
+
 ## Стакан сейчас (TASK-0009)
 Полосы на главном графике: 10 крупнейших ступеней заявок на покупку ниже
 цены и 10 на продажу выше, сумма спота Binance + OKX. Бэкенд отдаёт готовые
@@ -396,6 +415,8 @@ src/
   снимок 30 с: худший случай отставания ≈ 90 с
 - История OI — опрос раз в 5 мин (`useOpenInterestHistory`), только
   выбранного шага; новая часовая точка у бэкенда — в ≈ hh:10
+- Ликвидации — опрос раз в 5 мин (`useLiquidations`); сумма за 24 часа
+  отстаёт от часов до ≈ 21 мин: 16 мин окна + опрос
 - Стакан — опрос раз в 20 с (`useOrderBook`), бэкенд держит снимок 15 с:
   снимок на экране старше ≤ ≈ 35 с
 - Компании-держатели — опрос раз в 10 мин (`useTreasury`), бэкенд — снимок час
