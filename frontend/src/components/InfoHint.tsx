@@ -57,6 +57,10 @@ const Bubble = styled.span<{ $hidden: boolean }>`
   font-family: ${({ theme }) => theme.font.sans};
   font-size: ${({ theme }) => theme.fontSize.sm};
   font-weight: 400;
+  /* Значок стоит внутри заголовков caption-uppercase (TASK-0016) */
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: left;
   line-height: 1.5;
   color: ${({ theme }) => theme.colors.body};
   visibility: hidden;
@@ -81,6 +85,7 @@ const Button = styled.button`
   font-family: ${({ theme }) => theme.font.sans};
   font-size: ${({ theme }) => theme.fontSize.xs};
   line-height: 1;
+  letter-spacing: 0;
   color: ${({ theme }) => theme.colors.muted};
   cursor: help;
 

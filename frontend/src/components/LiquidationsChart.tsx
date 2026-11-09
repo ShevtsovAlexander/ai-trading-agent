@@ -19,6 +19,7 @@ import type {
 import type { Exchange } from "../types/derivatives";
 import type { LiqPeriod, Liquidations } from "../types/liquidations";
 import { InfoHint } from "./InfoHint";
+import { BLOCK_HINT_LABEL, BLOCK_HINTS, HintSlot } from "./blockHints";
 import { Skeleton } from "./Skeleton";
 
 // data — ряд текущих монеты и периода; null — данных для них нет (запрос идёт
@@ -230,7 +231,10 @@ export const LiquidationsChart = ({ data, market, period, onPeriodChange, loadin
     <Container>
       <Controls>
         <Heading>
-          <Title>Ликвидации</Title>
+          <Title>
+            Ликвидации
+            <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.liquidations}</InfoHint></HintSlot>
+          </Title>
           <Market>{data?.market ?? market}</Market>
         </Heading>
         <Tabs>
@@ -335,6 +339,9 @@ const Heading = styled.div`
 `;
 
 const Title = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 1.5px;

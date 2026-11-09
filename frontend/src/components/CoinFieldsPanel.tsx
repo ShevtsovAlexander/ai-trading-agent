@@ -1,5 +1,7 @@
 import styled from 'styled-components';
 import { Skeleton } from './Skeleton';
+import { InfoHint } from './InfoHint';
+import { BLOCK_HINT_LABEL, BLOCK_HINTS, HintRow, HintSlot } from './blockHints';
 import type { CoinFields } from '../types/coin';
 
 interface Props {
@@ -46,7 +48,10 @@ export const CoinFieldsPanel = ({ data }: Props) => {
     return (
         <Container>
             <Header>
-                <SectionTitle>Монета</SectionTitle>
+                <SectionTitle>
+                    Монета
+                    <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.coin}</InfoHint></HintSlot>
+                </SectionTitle>
                 <Source>
                     {ticker} · CoinGecko · обновлено {time(data.updatedAt)}
                 </Source>
@@ -112,7 +117,10 @@ export const CoinFieldsPanel = ({ data }: Props) => {
 export const CoinFieldsPanelSkeleton = () => (
     <Container aria-busy="true" aria-label="Поля монеты загружаются">
         <Header>
-            <Skeleton $w="70px" $h="12px" />
+            <HintRow>
+                <Skeleton $w="70px" $h="12px" />
+                <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.coin}</InfoHint></HintSlot>
+            </HintRow>
             <Skeleton $w="180px" $h="10px" />
         </Header>
         <Pair>
@@ -158,6 +166,9 @@ const Header = styled.div`
 // caption-uppercase системы (DESIGN.md «Typography»)
 const SectionTitle = styled.div`
     font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-weight: 600;
     letter-spacing: 1.5px;
     text-transform: uppercase;

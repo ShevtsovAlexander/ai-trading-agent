@@ -2,6 +2,8 @@ import styled, { useTheme, type DefaultTheme } from 'styled-components';
 import { INTERVAL_LABELS, INTERVAL_MS } from '../types/market';
 import { formatCandleTime } from '../utils/candleTime';
 import { Skeleton } from './Skeleton';
+import { InfoHint } from './InfoHint';
+import { BLOCK_HINT_LABEL, BLOCK_HINTS, HintRow, HintSlot } from './blockHints';
 import type { Interval, MarketView } from '../types/market';
 
 interface Props {
@@ -25,6 +27,9 @@ const Header = styled.div`
 `;
 
 const Market = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: ${({ theme }) => theme.fontSize.base};
     font-weight: 600;
     color: ${({ theme }) => theme.colors.ink};
@@ -153,7 +158,10 @@ export const MarketStateCard = ({ data }: Props) => {
     return (
         <Container>
             <Header>
-                <Market>{data.market}</Market>
+                <Market>
+                    {data.market}
+                    <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.marketCard}</InfoHint></HintSlot>
+                </Market>
                 <Candle>
                     свеча {INTERVAL_LABELS[data.interval]} ·{' '}
                     {candleLabel(data.closedAt, data.interval)}
@@ -250,7 +258,10 @@ export const MarketStateCard = ({ data }: Props) => {
 export const MarketStateCardSkeleton = () => (
     <Container aria-busy="true">
         <Header>
-            <Skeleton $w="90px" $h="16px" />
+            <HintRow>
+                <Skeleton $w="90px" $h="16px" />
+                <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.marketCard}</InfoHint></HintSlot>
+            </HintRow>
             <Skeleton $w="140px" $h="10px" />
         </Header>
         <PriceBlock>
