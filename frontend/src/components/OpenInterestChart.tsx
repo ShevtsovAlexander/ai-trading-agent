@@ -16,18 +16,21 @@ import type {
   UTCTimestamp,
   WhitespaceData,
 } from "lightweight-charts";
-import type { Exchange, OiStep, OpenInterestHistory } from "../types/derivatives";
+import type { Exchange, OiPeriod, OiStep, OpenInterestHistory } from "../types/derivatives";
 import { Skeleton } from "./Skeleton";
 import { InfoHint } from "./InfoHint";
 import { BLOCK_HINT_LABEL, BLOCK_HINTS, HintSlot } from "./blockHints";
 
-// data — ряд текущих монеты и шага; null — данных для них нет (запрос идёт
-// или упал): график пуст, а не показывает прошлую монету
+// data — ряд текущих монеты, периода и шага; null — данных для них нет (запрос
+// идёт или упал): график пуст, а не показывает прошлую монету
 interface Props {
   data: OpenInterestHistory | null;
   market: string; // 'BTC/USDT' — в заголовке и без данных
-  step: OiStep;
+  period: OiPeriod;
+  onPeriodChange: (p: OiPeriod) => void;
+  step: OiStep; // выбор шага 30 дней; на 1y / all график по дням
   onStepChange: (s: OiStep) => void;
+  longAvailable: boolean | null; // false — нет ключа Coinalyze: 1Г и «Всё» погашены
   loading: boolean;
 }
 
@@ -39,6 +42,17 @@ const STEPS: { label: string; value: OiStep }[] = [
   { label: "По дням", value: "1d" },
   { label: "По часам", value: "1h" },
 ];
+
+// Строка периодов (TASK-0017, решение человека): 30Д — биржи, 1Г и «Всё» — Coinalyze
+const PERIODS: { label: string; value: OiPeriod }[] = [
+  { label: "30Д", value: "30d" },
+  { label: "1Г", value: "1y" },
+  { label: "Всё", value: "all" },
+];
+
+const SOURCE_URL = "https://coinalyze.net/"; // ссылка — условие бесплатного API, как у ликвидаций
+const NO_KEY_HINT =
+  "Год и «Всё» берутся из Coinalyze: нужен бесплатный ключ (COINALYZE_API_KEY в backend/.env). Без него — только 30 дней.";
 
 const EXCHANGES: { id: Exchange; label: string }[] = [
   { id: "binance", label: "Binance" },
@@ -86,23 +100,31 @@ const toLines = (d: OpenInterestHistory) => {
 };
 
 // Момент точки — местное время. По дням — только дата: снимок 00:00 UTC
-// (решение человека, T6)
-const formatMoment = (ms: number, step: OiStep) => {
+// (решение человека, T6). На годе и «Всё» — с годом и в UTC (TASK-0017): засечки
+// оси библиотека ставит по UTC, в местном времени западнее Гринвича под засечкой
+// 2023 вышло бы «2022» (критик 17.4); так же подписаны ликвидации на 1Г
+const formatMoment = (ms: number, step: OiStep, long = false) => {
   const d = new Date(ms);
-  const date = d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+  const date = d.toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "short",
+    ...(long ? { year: "numeric", timeZone: "UTC" } : {}),
+  });
   if (step === "1d") return date;
   return `${date}, ${d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
 };
 
-const tickMark = (time: Time, type: TickMarkType): string => {
+// long — год и «Всё»: подписи засечек в UTC, как сами засечки (см. formatMoment)
+const tickMark = (long: boolean) => (time: Time, type: TickMarkType): string => {
   const d = new Date((time as UTCTimestamp) * 1000);
+  const tz = long ? { timeZone: "UTC" } : {};
   switch (type) {
     case TickMarkType.Year:
-      return String(d.getFullYear());
+      return String(long ? d.getUTCFullYear() : d.getFullYear());
     case TickMarkType.Month:
-      return d.toLocaleDateString("ru-RU", { month: "short" });
+      return d.toLocaleDateString("ru-RU", { month: "short", ...tz });
     case TickMarkType.DayOfMonth:
-      return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+      return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short", ...tz });
     default:
       return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   }
@@ -117,14 +139,26 @@ const bn = (usd: number) =>
 const fmtPrice = (v: number) =>
   v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const key = (d: OpenInterestHistory) => `${d.coinId}|${d.step}`;
+const key = (d: OpenInterestHistory) => `${d.coinId}|${d.period}|${d.step}`;
 
-export const OpenInterestChart = ({ data, market, step, onStepChange, loading }: Props) => {
+export const OpenInterestChart = ({
+  data,
+  market,
+  period,
+  onPeriodChange,
+  step,
+  onStepChange,
+  longAvailable,
+  loading,
+}: Props) => {
+  // Шаг, которым нарисован график: на годе и «Всё» — по дням
+  const shownStep: OiStep = period === "30d" ? step : "1d";
+  const long = period !== "30d";
   const theme = useTheme();
   const boxRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<{ oi: ISeriesApi<"Line">; price: ISeriesApi<"Line"> } | null>(null);
-  // fitContent — только при смене монеты или шага: опрос не сбрасывает зум
+  // fitContent — только при смене монеты, периода или шага: опрос не сбрасывает зум
   const drawnRef = useRef<string | null>(null);
   // Момент под перекрестием и ключ ряда, к которому он относится
   const [hover, setHover] = useState<{ key: string; t: number } | null>(null);
@@ -192,11 +226,11 @@ export const OpenInterestChart = ({ data, market, step, onStepChange, loading }:
   useEffect(() => {
     chartRef.current?.applyOptions({
       localization: {
-        timeFormatter: (time: Time) => formatMoment((time as UTCTimestamp) * 1000, step),
+        timeFormatter: (time: Time) => formatMoment((time as UTCTimestamp) * 1000, shownStep, long),
       },
-      timeScale: { timeVisible: step === "1h", tickMarkFormatter: tickMark },
+      timeScale: { timeVisible: shownStep === "1h", tickMarkFormatter: tickMark(long) },
     });
-  }, [step, theme]);
+  }, [shownStep, long, theme]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -254,18 +288,40 @@ export const OpenInterestChart = ({ data, market, step, onStepChange, loading }:
       <Controls>
         <Heading>
           <Title>
-          Открытые позиции · 30 дней
-          <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.openInterest}</InfoHint></HintSlot>
-        </Title>
+            Открытые позиции
+            <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.openInterest}</InfoHint></HintSlot>
+          </Title>
           <Market>{data?.market ?? market}</Market>
         </Heading>
-        <Tabs>
-          {STEPS.map((s) => (
-            <StepBtn key={s.value} $active={step === s.value} onClick={() => onStepChange(s.value)}>
-              {s.label}
-            </StepBtn>
-          ))}
-        </Tabs>
+        <Switches>
+          <Tabs>
+            {PERIODS.map((p) => {
+              // Без ключа длинные периоды не нажимаются; до первого ответа — доступны
+              const off = p.value !== "30d" && longAvailable === false;
+              return (
+                <StepBtn
+                  key={p.value}
+                  $active={period === p.value}
+                  disabled={off}
+                  onClick={() => onPeriodChange(p.value)}
+                >
+                  {p.label}
+                </StepBtn>
+              );
+            })}
+            {longAvailable === false && <InfoHint label="Почему год и «Всё» недоступны">{NO_KEY_HINT}</InfoHint>}
+          </Tabs>
+          {/* Шаг — только на 30 днях (решение человека); выбор запоминается */}
+          {!long && (
+            <Tabs>
+              {STEPS.map((s) => (
+                <StepBtn key={s.value} $active={step === s.value} onClick={() => onStepChange(s.value)}>
+                  {s.label}
+                </StepBtn>
+              ))}
+            </Tabs>
+          )}
+        </Switches>
       </Controls>
 
       <Legend>
@@ -273,7 +329,7 @@ export const OpenInterestChart = ({ data, market, step, onStepChange, loading }:
         {data && points.length === 0 && <FieldError>Ни одна биржа не ответила</FieldError>}
         {data && shown && (
           <>
-            <Value>{formatMoment(shown.t, data.step)}</Value>
+            <Value>{formatMoment(shown.t, data.step, data.period !== "30d")}</Value>
             <LegendItem>
               <LegendDot $color={theme.chart.oi} />
               сумма <Strong>${bn(shown.totalUsd)}</Strong>
@@ -282,7 +338,8 @@ export const OpenInterestChart = ({ data, market, step, onStepChange, loading }:
               <LegendItem key={e.id}>
                 {e.label}{" "}
                 {failed.has(e.id) ? (
-                  <FieldError>недоступна</FieldError>
+                  // На годе и «Всё» биржа работает — данных нет у источника (критик 17.4)
+                  <FieldError>{data.source === "coinalyze" ? "нет данных Coinalyze" : "недоступна"}</FieldError>
                 ) : (
                   <Value>${bn(shown.byExchange[e.id] ?? 0)}</Value>
                 )}
@@ -307,6 +364,18 @@ export const OpenInterestChart = ({ data, market, step, onStepChange, loading }:
         {/* Ни одна не ответила — суммы нет, «неполная» не о чем (легенда) */}
         {missing.length > 0 && points.length > 0 && (
           <Missing> · без {missing.join(", ")} — сумма неполная</Missing>
+        )}
+        {/* Источник и начало истории — на годе и «Всё» (PRD 7): дата — первая точка
+            ответа, не листинг монеты */}
+        {data?.source === "coinalyze" && (
+          <>
+            {" · "}
+            по дням, данные{" "}
+            <SourceLink href={SOURCE_URL} target="_blank" rel="noopener">
+              Coinalyze
+            </SourceLink>
+            {points.length > 0 && <> · с {formatMoment(points[0].t, "1d", true)}</>}
+          </>
         )}
       </Caption>
 
@@ -369,9 +438,20 @@ const Market = styled.span`
   color: ${({ theme }) => theme.colors.muted};
 `;
 
+const Switches = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+`;
+
 const Tabs = styled.div`
   display: flex;
+  align-items: center;
   gap: 2px;
+`;
+
+const SourceLink = styled.a`
+  color: ${({ theme }) => theme.colors.body};
 `;
 
 // category-tab внутри карточки — активная surfaceElevated (frontend/CLAUDE.md)
@@ -385,6 +465,12 @@ const StepBtn = styled.button<{ $active: boolean }>`
   color: ${({ $active, theme }) => ($active ? theme.colors.ink : theme.colors.muted)};
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+
+  /* Нет ключа Coinalyze — 1Г и «Всё» видны, но не нажимаются (решение человека) */
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 `;
 
 // Точка под перекрестием, иначе последняя; min-height — строка не прыгает

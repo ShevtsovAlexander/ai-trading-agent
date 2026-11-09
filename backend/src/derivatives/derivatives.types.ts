@@ -71,6 +71,8 @@ export interface Derivatives {
 // --- История OI (TASK-0008) ---
 // Шаг графика: по дням / по часам; окно всегда 30 дней
 export type OiStep = '1d' | '1h';
+// Период графика (TASK-0017): 30 дней — биржи напрямую; год и «Всё» — Coinalyze по дням
+export type OiPeriod = '30d' | '1y' | 'all';
 
 // Точка ряда: OI учтённых бирж в один момент t (не метка биржи — у OKX
 // метка на шаг раньше момента, research TASK-0008 «Дозамер»)
@@ -81,13 +83,16 @@ export interface OiPoint {
   price: number | null; // close спота Binance свечи, закрытой в t; null — нет свечи
 }
 
-// Ответ GET /derivatives/:coinId/open-interest?step= (зеркало —
+// Ответ GET /derivatives/:coinId/open-interest?period=&step= (зеркало —
 // frontend/src/types/derivatives.ts). Отказ биржи — в её поле, биржа выпадает
 // из суммы всех точек; все три упали — points пуст (план TASK-0008)
 export interface OpenInterestHistory {
   coinId: string;
   market: string;
-  step: OiStep;
+  period: OiPeriod; // TASK-0017
+  step: OiStep; // на 1y / all всегда '1d'
+  source: 'exchanges' | 'coinalyze'; // 30d — биржи напрямую, 1y / all — Coinalyze
+  longAvailable: boolean; // задан ли ключ Coinalyze: без него фронт гасит 1Г и «Всё»
   exchanges: ({ exchange: Exchange } | { exchange: Exchange; error: string })[]; // всегда binance, okx, bybit
   priceError: string | null; // спот недоступен — у всех точек price null
   points: OiPoint[]; // по возрастанию t; дыра — шаг между соседями больше step

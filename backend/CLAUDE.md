@@ -35,6 +35,7 @@ CoinGecko (TASK-0013). Своей истории цен не копит — ис
   капитализация, FDV и предложение
 - Ликвидации (TASK-0015) — Coinalyze `liquidation-history`, необязательный ключ
   `COINALYZE_API_KEY`, 40 вызовов в минуту. Суммы неполные (`../docs/RESEARCH.md`)
+- OI 1Г и «Всё» (TASK-0017) — Coinalyze `open-interest-history`, тот же ключ, по дням с 2022-09-30
 - technicalindicators — только в тестах, эталон формул индикаторов
 
 ## Структура проекта
@@ -80,13 +81,14 @@ src/
 ├── derivatives/                  — TASK-0007, история OI — TASK-0008
 │   ├── sources.ts                — запросы к fapi/OKX/Bybit: ставка+markPrice, история ставок постранично, OI трёх бирж в USD; история OI трёх бирж и mark Bybit постранично; строгий разбор
 │   ├── oi-history.ts             — buildOiSeries: ряд OI на сетке моментов (сдвиг меток OKX, окно 30 дн., дыры, Bybit × mark, цена спота)
+│   ├── oi-long.ts                — TASK-0017: parseOiHistory / fetchOiHistoryCoinalyze (дневной OI Coinalyze в USD), buildOiLongSeries (момент = метка + сутки, живой день отброшен, дыры, цена спота), OI_LONG_FROM 2022-09-30
 │   ├── stress.ts                 — fundingStress: мера «от нейтральной» 0,01 % за 365 дней
-│   ├── derivatives.service.ts    — сборка ответа, allSettled, кэш снимка 30 с, кэш истории до выплаты; openInterestHistory — ряд OI с кэшем по монете и шагу
+│   ├── derivatives.service.ts    — сборка ответа, allSettled, кэш снимка 30 с, кэш истории до выплаты; openInterestHistory — ряд OI 30 дней с кэшем по монете и шагу, 1y / all — Coinalyze (свои кэши ряда и спота, пауза 429)
 │   ├── derivatives.controller.ts — GET /derivatives/:coinId, GET /derivatives/:coinId/open-interest
-│   ├── derivatives.module.ts
-│   ├── derivatives.types.ts      — символы бирж по coinId, Stress, Derivatives, OiStep, OiPoint, OpenInterestHistory (зеркало — frontend/src/types/derivatives.ts)
-│   ├── fixtures/                 — live-2026-10-27.json (ответы бирж, оракул разбора), stress-oracle.json (история + эталон Python), oi-history-2026-10-28.json (история OI BTC обоих шагов + эталон ряда от скрипта Python)
-│   └── *.spec.ts                 — sources 62, stress 19, service 33, oi-history 14
+│   ├── derivatives.module.ts     — HttpModule с таймаутом 10 с (TASK-0017)
+│   ├── derivatives.types.ts      — символы бирж по coinId, Stress, Derivatives, OiStep, OiPeriod, OiPoint, OpenInterestHistory (зеркало — frontend/src/types/derivatives.ts)
+│   ├── fixtures/                 — live-2026-10-27.json (ответы бирж, оракул разбора), stress-oracle.json (история + эталон Python), oi-history-2026-10-28.json (история OI BTC обоих шагов + эталон ряда от скрипта Python), oi-long-2026-11-09.json (Coinalyze и свечи 3 монет параметрами кода + эталон `scripts/oi-long-oracle.py`)
+│   └── *.spec.ts                 — sources 62, stress 19, service 34, oi-history 14, oi-long 42, oi-long.service 29
 ├── digest/                       — свод «Инфополе», TASK-0012
 │   ├── digest.module.ts          — HttpModule с таймаутом 10 с, MarketModule (режим)
 │   ├── digest.service.ts         — факты трёх монет (allSettled) + заголовки → Groq → checkSummary; пара свод+факты, кэш по хешу ленты и фактов
@@ -136,7 +138,7 @@ src/
 - GET  /market/view/:coinId?interval=5m              — последняя закрытая свеча интервала + aiComment
 - GET  /market/regime/:coinId              — режим рынка по дневным свечам: ADX(14), черта 25 (TASK-0011)
 - GET  /derivatives/:coinId               — ставка Binance + мера, OI Binance/OKX/Bybit (TASK-0007)
-- GET  /derivatives/:coinId/open-interest?step=1d|1h — ряд OI трёх бирж за 30 дней и цена спота (TASK-0008)
+- GET  /derivatives/:coinId/open-interest?period=30d|1y|all&step=1d|1h — ряд OI трёх бирж и цена спота: 30 дней — биржи (TASK-0008), 1y / all — Coinalyze по дням (TASK-0017)
 - GET  /orderbook/:coinId                 — стены стакана спота Binance + OKX: 10 крупнейших ступеней с каждой стороны (TASK-0009)
 - GET  /coin/:coinId                      — капитализация, FDV, предложение с CoinGecko (TASK-0010)
 - GET  /treasury/:coinId                  — компании-держатели: всего монет, доля от обращения, топ-5 (TASK-0013)
@@ -366,6 +368,30 @@ openInterest }`. Отказ источника — текстом в его по
 - Сверка: бэкенд = биржи напрямую, каждая точка BTC/ETH/SOL × оба шага,
   0 провалов (tasklist T4); экран = бэкенд на всех точках (T7).
 
+## Открытые позиции 1Г и «Всё» (TASK-0017)
+`GET /derivatives/:coinId/open-interest?period=1y|all` → та же `OpenInterestHistory`, `period`, `step: '1d'`,
+`source: 'coinalyze'`. В ответе 30 дней — `period: '30d'`, `source: 'exchanges'`, `longAvailable` (задан ли ключ,
+читается на каждый ответ, и из кэша). Без `period` — 30d, как раньше. Решение — `../docs/DECISIONS.md` 2026-11-09,
+замер — `../docs/RESEARCH.md` «OI глубже 30 дней».
+- **400** — период не `30d`/`1y`/`all`; `step=1h` на 1y/all («Почасовой шаг — только 30 дней»); другой шаг;
+  монета без символов Coinalyze (`LIQUIDATION_SYMBOLS`). `step` на 1y/all можно не задавать.
+- **502** — нет ключа (без запроса), 401/403 «Coinalyze отклонил ключ», 429 «Coinalyze: превышен лимит
+  запросов», отказ или все символы пусты «Coinalyze недоступен». Тексты — как у ликвидаций.
+- **Источник** (`oi-long.ts`): один запрос на монету, 3 символа ликвидаций, `daily`, `convert_to_usd=true`,
+  `from` 2022-09-30, `to` = now. Разбор строгий; OI 0 — пропуск дня. Биржа без единого наступившего бара
+  (нет в ответе, пусто, нули, только живой день) — `{ exchange, error: 'нет данных Coinalyze' }`, выпадает
+  из всех точек.
+- **Ряд:** момент = метка + сутки (бар `D` — OI на конец дня); момент позже now отброшен; бары раньше
+  2022-09-30 не берутся; точка — только при всех учтённых биржах; сумма строго binance → okx → bybit; цена —
+  close спота Binance свечи, открытой в момент − сутки (`fetchClosedCandles` с 2022-09-30, 2 страницы).
+  1y — последние 365 точек «Всё».
+- **Кэш:** ряд Coinalyze и спот — раздельно по монете (упал спот — `priceError`, повтор к Binance через 60 с
+  без запроса к Coinalyze). Полный (все три биржи без дыр до вчерашнего бара; спот — до вчерашней свечи) —
+  до следующей полуночи UTC + 10 мин, иначе и ошибка — 60 с. Один запрос в полёте на ключ. 429 — своя пауза
+  по `Retry-After` (без него 60 с), проверяется до кэша и в него не пишется. Ключ — только в заголовке.
+- Сверка: `python3 -I scripts/oi-long-oracle.py backend` из `backend/` — живой ответ = эталону; `live` —
+  Coinalyze против бирж 30 дней; `expected` — пересчёт эталона фикстуры без сети.
+
 ## Стакан сейчас (TASK-0009)
 `GET /orderbook/:coinId` → `OrderBookSnapshot { coinId, market, at, mid,
 step, coverage, exchanges, bids, asks }`. `400` — неизвестная монета
@@ -401,7 +427,7 @@ error }` в `exchanges`, не 502 (`Promise.allSettled`); обе упали — 
   по IP, догрузка истории увидит его в следующем ответе `klines`.
 - **Таймаут** запросов к биржам — 10 с (`HttpModule.register`): зависшая
   биржа — отказ в её поле, а не висящий маршрут (замер T3: оборван через
-  10 010 мс). У деривативов таймаута нет.
+  10 010 мс). У деривативов — тоже 10 с с TASK-0017.
 - Сверка (T4): бэкенд = пересчёт независимым скриптом по ответам бирж в тот
   же момент — 83–97 % ступеней × бирж точно, остальное — сдвиг момента
   между запросами (`../docs/aidd/tasklist/TASK-0009.md`).
@@ -449,6 +475,7 @@ last24h, points }`. Решение — `../docs/DECISIONS.md` 2026-11-05, зам
 - **Ключ:** только в заголовке; в журнал идут код и текст, а не ошибка axios целиком (в ней заголовки).
 - **Сверка с OKX:** `python3 -I scripts/coinalyze-vs-okx.py` из `backend/`; код выхода 2 — стоп PRD 5.
 - Замолчавшая биржа не обнаруживается: столбики просто ниже, пока ряд за окно не пуст целиком.
+- OI 1Г и «Всё» — свои кэш и пауза (`DerivativesService`): общего счёта лимита Coinalyze с ликвидациями нет.
 
 ## Компании-держатели (TASK-0013)
 `GET /treasury/:coinId` → `Treasury { coinId, market, totalHoldings,
@@ -541,6 +568,9 @@ TASK-0014, как достать прежний архив — `../docs/DECISION
   сложатся из разных моментов. Проверка — повторить сверку TASK-0008.4
   (цена пересчёта OKX ближе к mark Binance в `t`, чем в `t − шаг`;
   `../docs/aidd/tasklist/TASK-0008.md`).
+- **OI 1Г / «Всё»: окно после 00:00 UTC не замерено.** Вчерашний бар Coinalyze не менялся в трёх снимках
+  днём (`../docs/RESEARCH.md`); снятый в 00:00–00:10 бар закрепится до следующих суток, если Coinalyze ещё
+  дописывает его. Запас 10 мин перенесён с OKX.
 - Выдержка OKX 10 мин замерена на часовой границе; **дневная граница
   (00:00 UTC) не замерена** — правило перенесено с `1H` (TASK-0008.4).
 - Устаревшая копия ответа OKX с промежуточным значением позже 10 мин
@@ -573,7 +603,7 @@ TASK-0014, как достать прежний архив — `../docs/DECISION
 работает. Пустые `GROQ_MODEL` и `GROQ_REASONING_EFFORT` значение по умолчанию не дают
 (`??` пропускает пустую строку), поэтому в образце они закомментированы.
 
-COINALYZE_API_KEY=...            # необязательный; без него блок ликвидаций — 502 с причиной
+COINALYZE_API_KEY=...            # необязательный; без него ликвидации и OI 1y/all — 502 с причиной, на экране 1Г/«Всё» погашены
 GROQ_API_KEY=...
 GROQ_MODEL=openai/gpt-oss-120b   # id модели Groq; дефолт в коде — openai/gpt-oss-120b
 GROQ_REASONING_EFFORT=low        # low|medium|high; off — не слать параметр (модели без reasoning)
@@ -593,7 +623,11 @@ npm run build
 
 ## Тесты
 npm run test
-441 тест, только с внешним оракулом:
+513 тестов, только с внешним оракулом:
+- `derivatives/oi-long.spec.ts` — 42 и `oi-long.service.spec.ts` — 29 (TASK-0017): ряд 1Г / «Всё» 3 монет,
+  9 вариантов без биржи и 3 дыры — точно против эталона Python на фикстуре; края — известный ответ; сервис —
+  форма, 400/502, пустой ряд биржи, кэш до 00:10 UTC (±1 мс), дыра и неполный — 60 с, пауза 429, спот отдельно,
+  ключа нет в журнале. 15 мутантов разбора и сборки, 13 сервиса — пойманы.
 - `liquidations/liquidations.spec.ts` — 50: разбор и ряд — реальные ответы Coinalyze против эталона Python,
   сервис — кэш, лимит, отказы, ключа нет в журнале.
 - `indicators/indicators.spec.ts` — 16: EMA(9/21/26), RSI(14) на ряде и трёх

@@ -2,11 +2,15 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { BadRequestException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
 import { of, throwError } from 'rxjs';
 import { DerivativesService, SNAPSHOT_TTL_MS } from './derivatives.service';
 import { FundingView, OiPoint, OiStep, SourceError } from './derivatives.types';
 
 type Raw = Record<string, any>;
+// Ключ Coinalyze для DerivativesService (TASK-0017): по умолчанию задан
+const configWith = (key: string | undefined = 'ключ-для-теста') =>
+  ({ get: () => key }) as unknown as ConfigService;
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment --
    поля фикстуры — сырой JSON бирж */
 const LIVE = JSON.parse(
@@ -84,7 +88,7 @@ const fakeHttp = () => {
 
 const makeService = () => {
   const { http, calls, state } = fakeHttp();
-  const service = new DerivativesService(http);
+  const service = new DerivativesService(http, configWith());
   let now = NOW;
   service.clock = () => now;
   const count = () =>
@@ -421,7 +425,7 @@ const oiFake = () => {
 
 const makeOiService = () => {
   const { http, calls, fail } = oiFake();
-  const service = new DerivativesService(http);
+  const service = new DerivativesService(http, configWith());
   let now = OI_NOW;
   service.clock = () => now;
   const total = () =>
@@ -445,7 +449,10 @@ describe('DerivativesService.openInterestHistory', () => {
       expect(h).toEqual({
         coinId: 'bitcoin',
         market: 'BTC/USDT',
+        period: '30d',
         step,
+        source: 'exchanges',
+        longAvailable: true,
         exchanges: [
           { exchange: 'binance' },
           { exchange: 'okx' },
@@ -627,6 +634,23 @@ describe('DerivativesService.openInterestHistory', () => {
     setNow(t0 + 60_000);
     await service.openInterestHistory('bitcoin', '1d');
     expect(calls.binance).toHaveLength(2);
+  });
+
+  it('longAvailable — есть ли ключ Coinalyze, читается и для ряда из кэша (TASK-0017)', async () => {
+    const { http, calls } = oiFake();
+    let key: string | undefined = '  ';
+    const config = { get: () => key } as unknown as ConfigService;
+    const service = new DerivativesService(http, config);
+    service.clock = () => OI_NOW;
+    const first = await service.openInterestHistory('bitcoin', '1d');
+    expect(first.longAvailable).toBe(false);
+    expect(first.period).toBe('30d');
+    expect(first.source).toBe('exchanges');
+    key = 'ключ';
+    const cached = await service.openInterestHistory('bitcoin', '1d');
+    expect(cached.longAvailable).toBe(true);
+    expect(calls.binance).toHaveLength(1);
+    expect(cached.points).toEqual(first.points);
   });
 
   it.each([
