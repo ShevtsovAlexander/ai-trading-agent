@@ -2,6 +2,8 @@ import styled from 'styled-components';
 import { Skeleton } from './Skeleton';
 import { REGIME_LABELS } from '../types/market';
 import type { MarketRegime } from '../types/market';
+import { InfoHint } from './InfoHint';
+import { BLOCK_HINT_LABEL, BLOCK_HINTS, HintRow, HintSlot } from './blockHints';
 
 interface Props {
     data: MarketRegime;
@@ -29,7 +31,10 @@ export const MarketRegimePanel = ({ data }: Props) => {
     return (
         <Container>
             <Header>
-                <SectionTitle>Режим рынка</SectionTitle>
+                <SectionTitle>
+                    Режим рынка
+                    <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.regime}</InfoHint></HintSlot>
+                </SectionTitle>
                 <Source>{ticker} · Binance · дневные свечи</Source>
             </Header>
 
@@ -66,7 +71,10 @@ export const MarketRegimePanel = ({ data }: Props) => {
 export const MarketRegimePanelSkeleton = () => (
     <Container aria-busy="true" aria-label="Режим рынка загружается">
         <Header>
-            <Skeleton $w="100px" $h="12px" />
+            <HintRow>
+                <Skeleton $w="100px" $h="12px" />
+                <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.regime}</InfoHint></HintSlot>
+            </HintRow>
             <Skeleton $w="160px" $h="10px" />
         </Header>
         <Main>
@@ -100,6 +108,9 @@ const Header = styled.div`
 // caption-uppercase системы (DESIGN.md «Typography»)
 const SectionTitle = styled.div`
     font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-weight: 600;
     letter-spacing: 1.5px;
     text-transform: uppercase;

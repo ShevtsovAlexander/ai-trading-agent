@@ -77,4 +77,4 @@ implement    → одна задача за вызов, СТОП на ревью
 
 - Backend: NestJS 11, Groq (LLM), @nestjs/schedule (cron новостей)
 - Frontend: React 19, TypeScript, Vite, styled-components, lightweight-charts
-- Внешние данные: Binance (свечи по запросу; фьючерсы — ставка финансирования, OI; стакан спота), OKX (OI, стакан спота) и Bybit (OI), RSS (Cointelegraph/Coindesk/Decrypt)
+- Внешние данные: Binance (свечи по запросу; фьючерсы — ставка финансирования, OI; стакан спота), OKX (OI, стакан спота) и Bybit (OI), RSS (Cointelegraph/Coindesk/Decrypt), Coinalyze (история ликвидаций, бесплатный ключ)

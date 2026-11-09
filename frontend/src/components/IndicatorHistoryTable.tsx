@@ -2,6 +2,8 @@ import styled, { useTheme, type DefaultTheme } from "styled-components";
 import type { Interval, SeriesPoint } from "../types/market";
 import { formatCandleTime } from "../utils/candleTime";
 import { Skeleton } from "./Skeleton";
+import { InfoHint } from "./InfoHint";
+import { BLOCK_HINT_LABEL, BLOCK_HINTS, HintSlot } from "./blockHints";
 
 // series — ряды индикаторов текущего графика (свечи интервала)
 interface Props {
@@ -39,6 +41,9 @@ const Inner = styled.div`
 
 // caption-uppercase системы (DESIGN.md «Typography»)
 const Title = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 1.5px;
@@ -126,7 +131,10 @@ export const IndicatorHistoryTable = ({ coinId, interval, series, loading = fals
   return (
     <Container aria-busy={loading}>
       <Inner>
-        <Title>История индикаторов</Title>
+        <Title>
+          История индикаторов
+          <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.history}</InfoHint></HintSlot>
+        </Title>
         <Table>
           <HeadRow>
             <Th>Монета</Th>

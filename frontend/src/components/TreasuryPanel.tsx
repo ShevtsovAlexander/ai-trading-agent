@@ -1,5 +1,7 @@
 import styled from 'styled-components';
 import { Skeleton } from './Skeleton';
+import { InfoHint } from './InfoHint';
+import { BLOCK_HINT_LABEL, BLOCK_HINTS, HintRow, HintSlot } from './blockHints';
 import type { Treasury } from '../types/treasury';
 
 interface Props {
@@ -37,7 +39,10 @@ export const TreasuryPanel = ({ data }: Props) => {
     return (
         <Container>
             <Header>
-                <SectionTitle>Компании-держатели</SectionTitle>
+                <SectionTitle>
+                    Компании-держатели
+                    <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.treasury}</InfoHint></HintSlot>
+                </SectionTitle>
                 <Source>
                     {ticker} · CoinGecko · получено {time(data.fetchedAt)}
                 </Source>
@@ -86,7 +91,10 @@ export const TreasuryPanel = ({ data }: Props) => {
 export const TreasuryPanelSkeleton = () => (
     <Container aria-busy="true" aria-label="Компании-держатели загружаются">
         <Header>
-            <Skeleton $w="150px" $h="12px" />
+            <HintRow>
+                <Skeleton $w="150px" $h="12px" />
+                <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.treasury}</InfoHint></HintSlot>
+            </HintRow>
             <Skeleton $w="180px" $h="10px" />
         </Header>
         <Pair>
@@ -128,6 +136,9 @@ const Header = styled.div`
 // caption-uppercase системы (DESIGN.md «Typography»)
 const SectionTitle = styled.div`
     font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-weight: 600;
     letter-spacing: 1.5px;
     text-transform: uppercase;

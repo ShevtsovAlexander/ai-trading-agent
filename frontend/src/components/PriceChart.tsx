@@ -9,6 +9,8 @@ import { seriesKey } from "./chartData";
 import type { HoverPoint } from "./CandleChart";
 import type { OrderBookSnapshot, Wall } from "../types/orderbook";
 import type { WallSide } from "./wallsPrimitive";
+import { InfoHint } from "./InfoHint";
+import { BLOCK_HINT_LABEL, BLOCK_HINTS, HintSlot } from "./blockHints";
 
 interface Coin {
   id: string;
@@ -57,6 +59,9 @@ const Container = styled.div`
 
 // caption-uppercase системы (DESIGN.md «Typography»)
 const Title = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 1.5px;
@@ -318,7 +323,10 @@ export const PriceChart = ({
     <Container>
       <Controls>
         <Heading>
-          <Title>{coin.market} — цена / EMA / BB</Title>
+          <Title>
+            {coin.market} — цена / EMA / BB
+            <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.price}</InfoHint></HintSlot>
+          </Title>
           {/* Дата — всегда: «09:00 – 21:00» в прошлом не говорит, какой день */}
           {data && visible && (
             <VisibleSpan>

@@ -18,6 +18,8 @@ import type {
 } from "lightweight-charts";
 import type { Exchange, OiStep, OpenInterestHistory } from "../types/derivatives";
 import { Skeleton } from "./Skeleton";
+import { InfoHint } from "./InfoHint";
+import { BLOCK_HINT_LABEL, BLOCK_HINTS, HintSlot } from "./blockHints";
 
 // data — ряд текущих монеты и шага; null — данных для них нет (запрос идёт
 // или упал): график пуст, а не показывает прошлую монету
@@ -251,7 +253,10 @@ export const OpenInterestChart = ({ data, market, step, onStepChange, loading }:
     <Container>
       <Controls>
         <Heading>
-          <Title>Открытые позиции · 30 дней</Title>
+          <Title>
+          Открытые позиции · 30 дней
+          <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.openInterest}</InfoHint></HintSlot>
+        </Title>
           <Market>{data?.market ?? market}</Market>
         </Heading>
         <Tabs>
@@ -349,6 +354,9 @@ const Heading = styled.div`
 
 // caption-uppercase системы (DESIGN.md «Typography»)
 const Title = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 1.5px;

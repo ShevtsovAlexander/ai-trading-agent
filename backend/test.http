@@ -34,3 +34,8 @@ GET http://localhost:3000/derivatives/bitcoin/open-interest?step=1d
 
 # То же по часам (~720 точек, 16 запросов к биржам на промах кэша)
 GET http://localhost:3000/derivatives/bitcoin/open-interest?step=1h
+
+###
+
+# Ликвидации за период: 1d | 1m | 1y (TASK-0015)
+GET http://localhost:3000/liquidations/bitcoin?period=1m

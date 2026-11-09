@@ -3,6 +3,8 @@ import styled from 'styled-components';
 import { getNews, getDigest, type NewsItem, type Digest, type MarketFact } from '../api/news';
 import { useDelayedFlag } from '../hooks/useDelayedFlag';
 import { Skeleton } from './Skeleton';
+import { InfoHint } from './InfoHint';
+import { BLOCK_HINT_LABEL, BLOCK_HINTS, HintSlot } from './blockHints';
 
 // Категории, которые метим как регуляторно-значимые (визуальный акцент)
 const SIGNAL_CATEGORIES = new Set(['policy', 'regulation', 'finance']);
@@ -38,7 +40,10 @@ export const NewsPanel = () => {
     if (loading) {
         return (
             <Container aria-busy="true">
-                <Title>Лента новостей</Title>
+                <Title>
+                    Лента новостей
+                    <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.news}</InfoHint></HintSlot>
+                </Title>
                 {skeleton && (
                     <>
                         {/* Дайджест — одной плашкой: внутри DigestCard плашки
@@ -65,12 +70,18 @@ export const NewsPanel = () => {
 
     return (
         <Container>
-            <Title>Лента новостей · {news.length}</Title>
+            <Title>
+                Лента новостей · {news.length}
+                <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.news}</InfoHint></HintSlot>
+            </Title>
 
             {digest && (
                 <DigestCard>
                     <DigestHead>
-                        <DigestLabel>AI-свод</DigestLabel>
+                        <DigestLabel>
+                            AI-свод
+                            <HintSlot><InfoHint label={BLOCK_HINT_LABEL}>{BLOCK_HINTS.digest}</InfoHint></HintSlot>
+                        </DigestLabel>
                         <DigestMeta>
                             {digest.itemCount > 0 ? `${digest.itemCount} новостей` : 'без новостей'} ·{' '}
                             {formatTime(digest.generatedAt)}
@@ -186,6 +197,9 @@ const Container = styled.div`
 
 // caption-uppercase системы (DESIGN.md «Typography»)
 const Title = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 1.5px;
@@ -211,6 +225,9 @@ const DigestHead = styled.div`
 `;
 
 const DigestLabel = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: ${({ theme }) => theme.fontSize.xs};
   font-weight: 600;
   text-transform: uppercase;
