@@ -1,7 +1,15 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
+import { isAxiosError } from 'axios';
 import { fetchClosedCandles } from '../binance/klines';
-import { COINS } from '../market/market.types';
+import { LIQUIDATION_SYMBOLS } from '../liquidations/liquidations.types';
+import { COINS, Candle } from '../market/market.types';
 import {
   DERIVATIVE_SYMBOLS,
   Derivatives,
@@ -9,6 +17,7 @@ import {
   ExchangeOpenInterest,
   FundingPayment,
   FundingView,
+  OiPeriod,
   OiStep,
   OpenInterestHistory,
   SourceError,
@@ -19,6 +28,12 @@ import {
   OKX_SETTLE_MS,
   buildOiSeries,
 } from './oi-history';
+import {
+  OI_LONG_FROM,
+  OiBar,
+  buildOiLongSeries,
+  fetchOiHistoryCoinalyze,
+} from './oi-long';
 import {
   fetchFunding,
   fetchFundingHistory,
@@ -51,6 +66,25 @@ const HISTORY_DAYS = STRESS_PERIOD_DAYS + 1;
 export const OI_PUBLISH_MARGIN_MS = OKX_SETTLE_MS;
 export const OI_RETRY_MS = 60_000;
 
+// OI 1Г и «Всё» (TASK-0017): тексты и пауза — как у ликвидаций
+// (liquidations.service.ts), пауза своя: OI добавляет ≤ 3 запроса в сутки
+// (план TASK-0017, trade-off 3)
+const OI_PERIODS: OiPeriod[] = ['30d', '1y', 'all'];
+const EXCHANGES: Exchange[] = ['binance', 'okx', 'bybit'];
+const NO_KEY_TEXT =
+  'Не задан ключ Coinalyze (COINALYZE_API_KEY в backend/.env)';
+const LIMIT_TEXT = 'Coinalyze: превышен лимит запросов';
+const COINALYZE_DOWN = 'Coinalyze недоступен';
+const NO_DATA_TEXT = 'нет данных Coinalyze';
+export const COINALYZE_RETRY_AFTER_DEFAULT_S = 60;
+
+// Ряд Coinalyze монеты (на 1Г и «Всё» один) и дневной спот к нему
+interface LongRows {
+  rows: Partial<Record<Exchange, OiBar[]>>;
+  missing: Exchange[]; // нет в ответе или ряд пуст
+}
+type Kept<T> = { until: number; value: T | Error };
+
 const UNAVAILABLE: Record<Exchange, string> = {
   binance: 'Binance недоступен',
   okx: 'OKX недоступен',
@@ -76,11 +110,18 @@ export class DerivativesService {
     string,
     { until: number; value: OpenInterestHistory }
   >();
+  private readonly longRows = new Map<string, Kept<LongRows>>();
+  private readonly longSpot = new Map<string, Kept<Candle[]>>();
+  private readonly inflight = new Map<string, Promise<unknown>>();
+  private coinalyzePausedUntil = 0;
 
   // Часы — поле, чтобы тест мог сдвинуть время
   clock: () => number = Date.now;
 
-  constructor(private http: HttpService) {}
+  constructor(
+    private http: HttpService,
+    private config: ConfigService,
+  ) {}
 
   async get(coinId: string): Promise<Derivatives> {
     // Ключи двух словарей — один список монет; проверка по обоим, чтобы
@@ -171,7 +212,8 @@ export class DerivativesService {
   // buildOiSeries (сдвиг меток OKX, окно, дыры).
   async openInterestHistory(
     coinId: string,
-    step: string,
+    step: string | undefined,
+    period: string = '30d',
   ): Promise<OpenInterestHistory> {
     if (
       !Object.hasOwn(DERIVATIVE_SYMBOLS, coinId) ||
@@ -179,14 +221,36 @@ export class DerivativesService {
     ) {
       throw new BadRequestException(`Неизвестная монета: ${coinId}`);
     }
-    if (!Object.hasOwn(OI_STEP_MS, step)) {
+    if (!OI_PERIODS.includes(period as OiPeriod)) {
+      throw new BadRequestException(
+        `Неизвестный период: ${period} (30d, 1y или all)`,
+      );
+    }
+    if (period !== '30d') {
+      if (step === '1h') {
+        throw new BadRequestException('Почасовой шаг — только 30 дней');
+      }
+      if (step !== undefined && step !== '1d') {
+        throw new BadRequestException(`Неизвестный шаг: ${step} (1d или 1h)`);
+      }
+      // Символы Coinalyze — таблица ликвидаций: монеты нет в ней — 400, а не
+      // ложное «Coinalyze недоступен» (критик 17.3)
+      if (!Object.hasOwn(LIQUIDATION_SYMBOLS, coinId)) {
+        throw new BadRequestException(`Нет символов Coinalyze: ${coinId}`);
+      }
+      return this.openInterestLong(coinId, period as '1y' | 'all');
+    }
+    if (step === undefined || !Object.hasOwn(OI_STEP_MS, step)) {
       throw new BadRequestException(`Неизвестный шаг: ${step} (1d или 1h)`);
     }
     const st = step as OiStep;
     const now = this.clock();
     const key = `${coinId}|${st}`;
     const cached = this.oiHistories.get(key);
-    if (cached && now < cached.until) return cached.value;
+    // Ключ читается на каждый ответ: его наличие не кэшируется вместе с рядом
+    if (cached && now < cached.until) {
+      return { ...cached.value, longAvailable: this.hasKey() };
+    }
 
     const stepMs = OI_STEP_MS[st];
     const daily = st === '1d';
@@ -232,7 +296,10 @@ export class DerivativesService {
     const value: OpenInterestHistory = {
       coinId,
       market: COINS[coinId].market,
+      period: '30d',
       step: st,
+      source: 'exchanges',
+      longAvailable: this.hasKey(),
       exchanges: (['binance', 'okx', 'bybit'] as const).map((exchange) =>
         down[exchange]
           ? { exchange, error: UNAVAILABLE[exchange] }
@@ -259,6 +326,183 @@ export class DerivativesService {
       value,
     });
     return value;
+  }
+
+  // 1Г и «Всё» — один ряд Coinalyze на монету и дневной спот Binance, у
+  // каждого свой кэш: упал спот — повтор к Binance, а не к лимиту Coinalyze.
+  // Ряд полон (все три биржи, последний момент — сегодня 00:00 UTC) — до
+  // следующего момента + 10 мин (OI_PUBLISH_MARGIN_MS); иначе и ошибка — 60 с
+  private async openInterestLong(
+    coinId: string,
+    period: '1y' | 'all',
+  ): Promise<OpenInterestHistory> {
+    const key = this.config.get<string>('COINALYZE_API_KEY')?.trim();
+    if (!key) throw new BadGatewayException(NO_KEY_TEXT);
+    const [rows, spot] = await Promise.all([
+      this.loadLongRows(coinId, key),
+      this.loadLongSpot(coinId),
+    ]);
+    if (rows instanceof Error) throw new BadGatewayException(rows.message);
+
+    const now = this.clock();
+    const points = buildOiLongSeries({
+      period,
+      now,
+      rows: rows.rows,
+      spot: spot instanceof Error ? null : spot,
+    });
+    return {
+      coinId,
+      market: COINS[coinId].market,
+      period,
+      step: '1d',
+      source: 'coinalyze',
+      longAvailable: true,
+      exchanges: EXCHANGES.map((exchange) =>
+        rows.missing.includes(exchange)
+          ? { exchange, error: NO_DATA_TEXT }
+          : { exchange },
+      ),
+      priceError: spot instanceof Error ? spot.message : null,
+      points,
+    };
+  }
+
+  // Последний момент сетки дня, уже наступивший: сегодня 00:00 UTC
+  private lastDay(now: number): number {
+    return Math.floor(now / DAY_MS) * DAY_MS;
+  }
+
+  private keep<T>(
+    cache: Map<string, Kept<T>>,
+    id: string,
+    load: (now: number) => Promise<T>,
+    complete: (value: T, now: number) => boolean,
+    paused?: (now: number) => Error | null,
+  ): Promise<T | Error> {
+    const now = this.clock();
+    const cached = cache.get(id);
+    if (cached && now < cached.until) return Promise.resolve(cached.value);
+    const pending = this.inflight.get(id) as Promise<T | Error> | undefined;
+    if (pending) return pending;
+    // Пауза по лимиту — до запроса и без записи в кэш: иначе отказ прожил бы
+    // ещё 60 с после её конца (как liquidations.service.ts)
+    const blocked = paused?.(now);
+    if (blocked) return Promise.resolve(blocked);
+    const p = load(now)
+      .catch((e: unknown): Error => this.translateLong(id, e))
+      .then((value) => {
+        const full = !(value instanceof Error) && complete(value, now);
+        cache.set(id, {
+          until: full
+            ? this.lastDay(now) + DAY_MS + OI_PUBLISH_MARGIN_MS
+            : this.clock() + OI_RETRY_MS,
+          value,
+        });
+        return value;
+      })
+      .finally(() => this.inflight.delete(id));
+    this.inflight.set(id, p);
+    return p;
+  }
+
+  private loadLongRows(coinId: string, key: string): Promise<LongRows | Error> {
+    const symbols = LIQUIDATION_SYMBOLS[coinId];
+    return this.keep(
+      this.longRows,
+      `coinalyze|${coinId}`,
+      async (now) => {
+        const parsed = await fetchOiHistoryCoinalyze(
+          this.http,
+          key,
+          EXCHANGES.map((e) => symbols[e]),
+          OI_LONG_FROM,
+          now,
+        );
+        const rows: Partial<Record<Exchange, OiBar[]>> = {};
+        const missing: Exchange[] = [];
+        for (const e of EXCHANGES) {
+          const bars = parsed.get(symbols[e]);
+          // Ряд без единого наступившего момента (пуст, одни нули, только
+          // живой день) — тоже отказ биржи: иначе она «ответила» и обнулила
+          // все точки, а пометки не было бы (критик 17.2)
+          if (bars?.some((b) => b.t >= OI_LONG_FROM && b.t + DAY_MS <= now)) {
+            rows[e] = bars;
+          } else missing.push(e);
+        }
+        if (missing.length === EXCHANGES.length) {
+          throw new Error(COINALYZE_DOWN);
+        }
+        return { rows, missing };
+      },
+      (value, now) =>
+        value.missing.length === 0 &&
+        EXCHANGES.every((e) => this.dense(value.rows[e]!, now)),
+      (now) => (now < this.coinalyzePausedUntil ? new Error(LIMIT_TEXT) : null),
+    );
+  }
+
+  private loadLongSpot(coinId: string): Promise<Candle[] | Error> {
+    return this.keep(
+      this.longSpot,
+      `spot|${coinId}`,
+      async (now) =>
+        (
+          await fetchClosedCandles(
+            this.http,
+            COINS[coinId].symbol,
+            '1d',
+            OI_LONG_FROM,
+            now,
+            now,
+          )
+        ).candles,
+      (candles, now) => candles.at(-1)?.t === this.lastDay(now) - DAY_MS,
+    );
+  }
+
+  // Ряд биржи без дыр от OI_LONG_FROM до вчерашнего бара включительно: как
+  // полнота 30 дней по числу точек (план «Кэш», критик 17.3). В замере research
+  // дыр нет ни у одного из девяти рядов; сбойный 0 в середине — повтор раз в 60 с
+  private dense(bars: OiBar[], now: number): boolean {
+    const last = this.lastDay(now) - DAY_MS; // метка вчерашнего бара
+    const days = new Set(
+      bars.filter((b) => b.t >= OI_LONG_FROM && b.t <= last).map((b) => b.t),
+    );
+    return days.size === (last - OI_LONG_FROM) / DAY_MS + 1;
+  }
+
+  private hasKey(): boolean {
+    return !!this.config.get<string>('COINALYZE_API_KEY')?.trim();
+  }
+
+  // В журнал — только код и текст: у ошибки axios в config лежат заголовки с
+  // ключом. Спот — свои тексты: это Binance, не Coinalyze
+  private translateLong(id: string, e: unknown): Error {
+    const status = isAxiosError(e) ? e.response?.status : undefined;
+    const message = (e as Error)?.message;
+    this.logger.warn(`${id}: ${status ?? message ?? 'отказ'}`);
+    if (id.startsWith('spot|')) return new Error('Binance недоступен');
+    if (message === COINALYZE_DOWN) return new Error(message);
+    if (status === 401 || status === 403) {
+      return new Error('Coinalyze отклонил ключ');
+    }
+    if (status === 429) {
+      const wait = Number(
+        isAxiosError(e) ? e.response?.headers?.['retry-after'] : undefined,
+      );
+      // Поздний ответ не сокращает уже назначенную паузу
+      this.coinalyzePausedUntil = Math.max(
+        this.coinalyzePausedUntil,
+        this.clock() +
+          (Number.isFinite(wait) && wait > 0
+            ? wait
+            : COINALYZE_RETRY_AFTER_DEFAULT_S) *
+            1000,
+      );
+      return new Error(LIMIT_TEXT);
+    }
+    return new Error(COINALYZE_DOWN);
   }
 
   private history(

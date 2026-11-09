@@ -13,13 +13,15 @@ export class DerivativesController {
     return this.derivatives.get(coinId);
   }
 
-  // Ряд OI Binance + OKX + Bybit за 30 дней и цена спота (TASK-0008). 400 —
-  // неизвестная монета или шаг (1d | 1h); отказ биржи — в её поле
+  // Ряд OI Binance + OKX + Bybit и цена спота: 30 дней — биржи (TASK-0008), 1y и
+  // all — Coinalyze по дням (TASK-0017). 400 — монета, период, шаг; 502 — нет
+  // ключа или отказ Coinalyze (1y / all); отказ биржи — в её поле
   @Get(':coinId/open-interest')
   openInterest(
     @Param('coinId') coinId: string,
-    @Query('step') step: string,
+    @Query('step') step?: string,
+    @Query('period') period?: string,
   ): Promise<OpenInterestHistory> {
-    return this.derivatives.openInterestHistory(coinId, step);
+    return this.derivatives.openInterestHistory(coinId, step, period);
   }
 }

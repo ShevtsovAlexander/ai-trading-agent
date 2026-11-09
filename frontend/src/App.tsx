@@ -37,7 +37,7 @@ import {
   CoinFieldsPanel,
   CoinFieldsPanelSkeleton,
 } from "./components/CoinFieldsPanel";
-import type { OiStep } from "./types/derivatives";
+import type { OiPeriod, OiStep } from "./types/derivatives";
 import type { LiqPeriod } from "./types/liquidations";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
 import { useChartHistory } from "./hooks/useChartHistory";
@@ -164,7 +164,14 @@ export default function App() {
   // История OI — шаг «По дням» по умолчанию, почасовой ряд только по выбору
   // (TASK-0008, PRD 8)
   const [oiStep, setOiStep] = useState<OiStep>("1d");
-  const oiHistory = useOpenInterestHistory(activeCoin.id, oiStep);
+  // Период графика позиций (TASK-0017); шаг выбирается только на 30 дней, на
+  // годе и «Всё» — по дням, а выбор 30 дней запоминается
+  const [oiPeriod, setOiPeriod] = useState<OiPeriod>("30d");
+  const oiHistory = useOpenInterestHistory(
+    activeCoin.id,
+    oiPeriod,
+    oiPeriod === "30d" ? oiStep : "1d",
+  );
   // Ликвидации — своя загрузка и период, 1М по умолчанию (TASK-0015)
   const [liqPeriod, setLiqPeriod] = useState<LiqPeriod>("1m");
   const liquidations = useLiquidations(activeCoin.id, liqPeriod);
@@ -269,8 +276,11 @@ export default function App() {
             <OpenInterestChart
               data={oiHistory.data}
               market={activeCoin.market}
+              period={oiPeriod}
+              onPeriodChange={setOiPeriod}
               step={oiStep}
               onStepChange={setOiStep}
+              longAvailable={oiHistory.longAvailable}
               loading={oiHistory.loading}
             />
             {/* Ликвидации — своя карточка, как история OI (план TASK-0015) */}

@@ -23,7 +23,7 @@ src/
 ├── api/
 │   ├── client.ts                 — общий axios-инстанс (baseURL localhost:3000)
 │   ├── errors.ts                 — LoadError, classify, errorText: тексты ошибок для графика, карточки и деривативов (перенос из App.tsx, TASK-0007)
-│   ├── derivatives.ts            — getDerivatives (/derivatives/:coinId), getOpenInterestHistory (/derivatives/:coinId/open-interest?step=)
+│   ├── derivatives.ts            — getDerivatives (/derivatives/:coinId), getOpenInterestHistory (/derivatives/:coinId/open-interest?period=&step=)
 │   ├── liquidations.ts           — getLiquidations (/liquidations/:coinId?period=), TASK-0015
 │   ├── coin.ts                   — getCoinFields (/coin/:coinId), TASK-0010
 │   ├── treasury.ts               — getTreasury (/treasury/:coinId), TASK-0013
@@ -36,7 +36,7 @@ src/
 │   ├── TreasuryPanel.tsx         — блок «Компании-держатели» под «Монетой»: держат / стоимость, доля от обращения, топ-5, оговорка; скелетон
 │   ├── CoinFieldsPanel.tsx       — карточка «Монета» под карточкой рынка: капитализация, FDV, предложение, доля от максимума или «лимита нет», оговорка; скелетон
 │   ├── DerivativesPanel.tsx      — панель «Деривативы» под графиком: ставка и перевес от нормы, «как часто», OI трёх бирж, оговорка; скелетон
-│   ├── OpenInterestChart.tsx     — карточка «Открытые позиции · 30 дней»: вкладки шага, lightweight-charts (сумма OI справа, цена слева), легенда по перекрестию, «без X», оговорка
+│   ├── OpenInterestChart.tsx     — карточка «Открытые позиции»: периоды 30Д · 1Г · Всё (TASK-0017), шаг на 30Д, lightweight-charts (сумма OI справа, цена слева), легенда по перекрестию, «без X», источник, оговорка
 │   ├── LiquidationsChart.tsx     — карточка «Ликвидации»: вкладки 1Д/1М/1Г, сумма за 24 часа, столбики лонгов вверх и шортов вниз, легенда, оговорка
 │   ├── InfoHint.tsx              — значок «?» в круглой рамке с подсказкой: наведение, Tab, Esc
 │   ├── blockHints.ts             — тексты «что это» у заголовков 11 блоков (дословно из PRD TASK-0016), HintSlot — значок без роста шапки, HintRow — плашка скелетона со значком
@@ -53,7 +53,7 @@ src/
 │   ├── styled.d.ts               — типизация темы для styled-components
 │   └── theme.ts                  — токены ClickHouse: цвета, серии графика, шрифты, радиусы, размеры
 ├── types/
-│   ├── derivatives.ts            — Derivatives, FundingView, Stress, FundingState, OiStep, OiPoint, OpenInterestHistory (зеркало backend/src/derivatives/derivatives.types.ts)
+│   ├── derivatives.ts            — Derivatives, FundingView, Stress, FundingState, OiStep, OiPeriod, OiPoint, OpenInterestHistory (зеркало backend/src/derivatives/derivatives.types.ts)
 │   ├── liquidations.ts           — Liquidations, LiqPoint, Last24h, LiqPeriod (зеркало backend/src/liquidations/liquidations.types.ts)
 │   ├── coin.ts                   — CoinFields (зеркало backend/src/coin/coin.types.ts)
 │   ├── treasury.ts               — Treasury, TreasuryCompany (зеркало backend/src/treasury/treasury.types.ts)
@@ -61,7 +61,7 @@ src/
 │   └── market.ts                 — Interval/Range, границы, isAllowed, nearestAllowed, Candle, SeriesPoint, MarketSeries, MarketView, HistoryChunk/HISTORY_CHUNK, Regime, MarketRegime, REGIME_LABELS
 ├── hooks/
 │   ├── useDerivatives.ts         — деривативы монеты: опрос 60 с, токен запроса, данные и ошибка только текущей монеты, скелетон 300 мс
-│   ├── useOpenInterestHistory.ts — история OI выбранного шага: опрос 5 мин, токен, данные и ошибка только текущих монеты и шага, скелетон 300 мс
+│   ├── useOpenInterestHistory.ts — история OI выбранных периода и шага: опрос 5 мин, токен, данные и ошибка только текущих монеты, периода и шага, скелетон 300 мс, longAvailable из последнего ответа
 │   ├── useLiquidations.ts        — ликвидации выбранного периода: опрос 5 мин, токен, данные и ошибка только текущих монеты и периода, скелетон 300 мс
 │   ├── useCoinFields.ts          — поля монеты: опрос 60 с, токен, данные и ошибка только текущей монеты, скелетон 300 мс
 │   ├── useTreasury.ts            — компании-держатели: опрос 10 мин, токен, данные и ошибка только текущей монеты, скелетон 300 мс
@@ -256,6 +256,22 @@ src/
 - Приёмка — headless Chrome + CDP, 89 проверок: легенда = ответу бэкенда на
   всех 30 / 720 точках трёх монет, ленивые часы, смена монеты и поздний
   ответ, отказ каждой биржи (`../docs/aidd/tasklist/TASK-0008.md`, T7).
+
+## Открытые позиции 1Г и «Всё» (TASK-0017)
+Та же карточка: строка периодов 30Д · 1Г · Всё (решение человека), по умолчанию 30Д. Решение —
+`../docs/DECISIONS.md` 2026-11-09.
+- **Состояние** — `oiPeriod` в `App`; шаг выбирается только на 30Д и запоминается, на 1Г / «Всё» хук получает
+  `1d`, запрос — без шага. Хук — ключ `монета|период|шаг`, `longAvailable` — из последнего ответа любого периода
+  (до первого ответа `null`, кнопки активны).
+- **Без ключа** (`longAvailable: false` в ответе 30Д) 1Г и «Всё» видны, но не нажимаются (`disabled`), рядом
+  «?» с причиной. Ключ убрали после старта — до ответа 30Д кнопки активны, на 1Г пометка «График позиций не
+  обновился: Не задан ключ Coinalyze (…)».
+- **Подписи:** заголовок «Открытые позиции» без периода; на 1Г / «Всё» — «по дням, данные Coinalyze · с <первая
+  точка>» со ссылкой (условие бесплатного API); легенда — дата с годом; биржа без данных — «нет данных Coinalyze».
+  **Даты 1Г / «Всё» — в UTC** (ось, легенда, подпись): засечки библиотека ставит по UTC, а местное время западнее
+  Гринвича подписало бы засечку 2023 как «2022»; 30Д — местное время, как было.
+- Ошибка 1Г / «Всё» — текст бэкенда над карточкой, график пуст; переход на 30Д снимает её.
+- Приёмка — CDP, 48 проверок (`../docs/aidd/tasklist/TASK-0017.md`, T5).
 
 ## Ликвидации (TASK-0015)
 Карточка `LiquidationsChart` в `DerivativesRow` под графиком открытых позиций, смонтирована всегда.

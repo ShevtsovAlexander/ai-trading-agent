@@ -37,5 +37,20 @@ GET http://localhost:3000/derivatives/bitcoin/open-interest?step=1h
 
 ###
 
+# OI за год по дням из Coinalyze (TASK-0017): 365 точек; без ключа — 502
+GET http://localhost:3000/derivatives/bitcoin/open-interest?period=1y
+
+###
+
+# OI «Всё» — с 2022-09-30, один запрос Coinalyze на монету в сутки на оба периода
+GET http://localhost:3000/derivatives/bitcoin/open-interest?period=all
+
+###
+
+# 400: почасовой шаг — только 30 дней
+GET http://localhost:3000/derivatives/bitcoin/open-interest?period=1y&step=1h
+
+###
+
 # Ликвидации за период: 1d | 1m | 1y (TASK-0015)
 GET http://localhost:3000/liquidations/bitcoin?period=1m
